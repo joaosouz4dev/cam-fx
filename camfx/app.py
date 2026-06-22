@@ -1,16 +1,22 @@
 """Interface grafica do CamFX (Tkinter).
 
-Tela unica com: selecao de camera, liga/desliga blur e auto-framing, controles
-de intensidade, autostart e botao para minimizar para a bandeja.
+Modelo de uso: a camera virtual "CamFX" funciona em modo automatico. O app fica
+na bandeja; quando algum aplicativo (Meet, Teams, Zoom, Discord, OBS) abre a
+CamFX, a webcam fisica liga sozinha com os efeitos e desliga quando ninguem
+mais usa (a luz da webcam indica). A janela serve para pre-visualizar o
+resultado e ajustar os efeitos; nao ha botao de ligar/pausar manual.
 """
 
 from __future__ import annotations
 
+import struct
 import sys
 import threading
 import time
 import tkinter as tk
 from tkinter import messagebox, ttk
+
+from PIL import Image, ImageTk
 
 from . import autostart
 from .config import Config
@@ -18,6 +24,15 @@ from .log import log
 from .models import ensure_models
 from .pipeline import Pipeline, list_cameras
 from .tray import TrayIcon
+from .vcam_host import VCamHost
+from .virtualcam import (
+    DemandMonitor,
+    FRAME_FILE,
+    HEIGHT,
+    TOTAL_BYTES,
+    WIDTH,
+    _HEADER_SIZE,
+)
 
 
 class CamFXApp:
@@ -30,15 +45,14 @@ class CamFXApp:
         self._demand_thread = None
         self._demand_stop = None
         self._vcam_host = None
-        self._manual_override = False  # True quando o usuario forcou ligar/pausar
 
         self.root = tk.Tk()
-        self.root.title("CamFX - blur e auto-framing da camera")
-        self.root.geometry("420x560")
+        self.root.title("CamFX")
+        self.root.geometry("700x560")
         self.root.resizable(False, False)
         self.root.protocol("WM_DELETE_WINDOW", self.hide_to_tray)
 
-        self._status_var = tk.StringVar(value="Pronto.")
+        self._status_var = tk.StringVar(value="Iniciando...")
         self._cameras = list_cameras()
 
         self._build_ui()
@@ -47,137 +61,192 @@ class CamFXApp:
 
         self.tray = TrayIcon(
             on_show=self.show_window,
-            on_toggle=self._toggle_capture,
+            on_toggle=self.show_window,  # clique na bandeja so abre a janela
             on_quit=self.quit,
             is_running=lambda: self.pipeline.running,
         )
         self.tray.run_detached()
 
-        # So inicia minimizado quando lancado com --minimized (autostart do
-        # Windows). Aberto manualmente, a janela aparece normalmente.
         if start_minimized:
             self.root.after(300, self.hide_to_tray)
-        # Modo sob demanda: nao abre a camera ao iniciar. Um monitor liga o
-        # pipeline so quando algum app abre a camera CamFX.
-        self.root.after(1500, self._start_demand_monitor)
+        self.root.after(1200, self._start_demand_monitor)
+        self._tick_preview()
+        self._tick_status()
 
     # ---------- construcao da UI ----------
 
     def _build_ui(self) -> None:
-        pad = {"padx": 12, "pady": 6}
-        frm = ttk.Frame(self.root)
-        frm.pack(fill="both", expand=True, padx=8, pady=8)
+        root = ttk.Frame(self.root, padding=10)
+        root.pack(fill="both", expand=True)
 
-        ttk.Label(frm, text="Camera de entrada").pack(anchor="w", **pad)
-        # _cameras e uma lista de (indice, nome).
+        # Esquerda: preview ao vivo
+        left = ttk.Frame(root)
+        left.pack(side="left", fill="both", expand=True)
+        ttk.Label(left, text="Pre-visualizacao da CamFX", font=("Segoe UI", 10, "bold")).pack(anchor="w")
+        self._preview_label = ttk.Label(left)
+        self._preview_label.pack(pady=6)
+        self._preview_placeholder = ImageTk.PhotoImage(Image.new("RGB", (WIDTH // 2, HEIGHT // 2), (20, 24, 32)))
+        self._preview_label.configure(image=self._preview_placeholder)
+        ttk.Label(
+            left,
+            textvariable=self._status_var,
+            foreground="#2563eb",
+            wraplength=WIDTH // 2,
+        ).pack(anchor="w", pady=(4, 0))
+
+        # Direita: controles
+        right = ttk.Frame(root)
+        right.pack(side="right", fill="y", padx=(12, 0))
+
+        ttk.Label(right, text="Camera", font=("Segoe UI", 9, "bold")).pack(anchor="w")
         if not self._cameras:
             self._cameras = [(self.config.camera_index, f"Camera {self.config.camera_index}")]
         self._cam_indices = [i for i, _ in self._cameras]
         self._cam_combo = ttk.Combobox(
-            frm,
-            state="readonly",
+            right, state="readonly", width=24,
             values=[name for _, name in self._cameras],
         )
-        idx = (
-            self._cam_indices.index(self.config.camera_index)
-            if self.config.camera_index in self._cam_indices
-            else 0
-        )
+        idx = (self._cam_indices.index(self.config.camera_index)
+               if self.config.camera_index in self._cam_indices else 0)
         self._cam_combo.current(idx)
-        # Mantem o config alinhado com o que esta selecionado.
         self.config.camera_index = self._cam_indices[idx]
         self._cam_combo.bind("<<ComboboxSelected>>", self._on_camera_change)
-        self._cam_combo.pack(fill="x", **pad)
+        self._cam_combo.pack(anchor="w", pady=(0, 10))
 
-        # Efeitos
+        ttk.Label(right, text="Efeitos", font=("Segoe UI", 9, "bold")).pack(anchor="w")
         self._blur_var = tk.BooleanVar(value=self.config.blur_enabled)
-        ttk.Checkbutton(
-            frm, text="Blur de fundo", variable=self._blur_var,
-            command=self._on_toggle_blur,
-        ).pack(anchor="w", **pad)
-        self._blur_scale = self._slider(
-            frm, "Intensidade do blur", 3, 75, self.config.blur_strength,
-            self._on_blur_strength,
-        )
+        ttk.Checkbutton(right, text="Blur de fundo", variable=self._blur_var,
+                        command=self._on_toggle_blur).pack(anchor="w")
+        self._blur_scale = self._slider(right, "Intensidade do blur", 3, 75,
+                                        self.config.blur_strength, self._on_blur_strength)
 
         self._framing_var = tk.BooleanVar(value=self.config.framing_enabled)
-        ttk.Checkbutton(
-            frm, text="Auto-framing (segue o rosto)", variable=self._framing_var,
-            command=self._on_toggle_framing,
-        ).pack(anchor="w", **pad)
-        self._zoom_scale = self._slider(
-            frm, "Zoom do auto-framing (x10)", 10, 25,
-            int(self.config.framing_zoom * 10), self._on_zoom,
-        )
+        ttk.Checkbutton(right, text="Auto-framing (segue o rosto)",
+                        variable=self._framing_var,
+                        command=self._on_toggle_framing).pack(anchor="w")
+        self._zoom_scale = self._slider(right, "Zoom (x10)", 10, 25,
+                                        int(self.config.framing_zoom * 10), self._on_zoom)
 
-        ttk.Separator(frm).pack(fill="x", pady=8)
+        self._wb_var = tk.BooleanVar(value=self.config.autowb_enabled)
+        ttk.Checkbutton(right, text="Corrigir cor (white balance)",
+                        variable=self._wb_var,
+                        command=self._on_toggle_wb).pack(anchor="w")
 
-        # Inicializacao
+        ttk.Separator(right).pack(fill="x", pady=10)
+
         self._autostart_var = tk.BooleanVar(value=autostart.is_enabled())
-        ttk.Checkbutton(
-            frm, text="Iniciar com o Windows (minimizado na bandeja)",
-            variable=self._autostart_var, command=self._on_autostart,
-        ).pack(anchor="w", **pad)
+        ttk.Checkbutton(right, text="Iniciar com o Windows (minimizado)",
+                        variable=self._autostart_var,
+                        command=self._on_autostart).pack(anchor="w")
 
-        # Botoes
-        btns = ttk.Frame(frm)
-        btns.pack(fill="x", **pad)
-        self._toggle_btn = ttk.Button(
-            btns, text="Ligar camera", command=self._toggle_capture
-        )
-        self._toggle_btn.pack(side="left", expand=True, fill="x", padx=(0, 4))
-        ttk.Button(
-            btns, text="Minimizar", command=self.hide_to_tray
-        ).pack(side="left", expand=True, fill="x", padx=(4, 0))
+        ttk.Button(right, text="Minimizar para a bandeja",
+                   command=self.hide_to_tray).pack(anchor="w", fill="x", pady=(10, 0))
 
         ttk.Label(
-            frm, textvariable=self._status_var, foreground="#2563eb", wraplength=380
-        ).pack(anchor="w", **pad)
-
-        self._fps_var = tk.StringVar(value="")
-        ttk.Label(frm, textvariable=self._fps_var).pack(anchor="w", padx=12)
-        self._tick_fps()
+            right,
+            text="A camera liga sozinha quando voce\nseleciona 'CamFX' num app de video.",
+            foreground="#6b7280", font=("Segoe UI", 8),
+        ).pack(anchor="w", pady=(10, 0))
 
     def _slider(self, parent, label, lo, hi, value, callback):
-        ttk.Label(parent, text=label).pack(anchor="w", padx=12)
+        ttk.Label(parent, text=label, font=("Segoe UI", 8)).pack(anchor="w")
         var = tk.IntVar(value=value)
-        scale = ttk.Scale(
-            parent, from_=lo, to=hi, variable=var,
-            command=lambda _v: callback(var.get()),
-        )
-        scale.pack(fill="x", padx=12, pady=(0, 6))
+        scale = ttk.Scale(parent, from_=lo, to=hi, variable=var, length=200,
+                          command=lambda _v: callback(var.get()))
+        scale.pack(anchor="w", pady=(0, 8))
         return scale
+
+    # ---------- preview ----------
+
+    def _tick_preview(self):
+        """Mostra o ultimo frame que esta saindo pela CamFX (lido do arquivo)."""
+        try:
+            import os
+
+            if os.path.exists(FRAME_FILE):
+                with open(FRAME_FILE, "rb") as f:
+                    data = f.read(TOTAL_BYTES)
+                if len(data) >= TOTAL_BYTES:
+                    magic = struct.unpack("<i", data[0:4])[0]
+                    if magic == 0x43414D46:
+                        import numpy as np
+
+                        arr = np.frombuffer(data[_HEADER_SIZE:TOTAL_BYTES], dtype=np.uint8)
+                        arr = arr.reshape((HEIGHT, WIDTH, 3))[:, :, ::-1]  # BGR->RGB
+                        img = Image.fromarray(arr).resize((WIDTH // 2, HEIGHT // 2))
+                        photo = ImageTk.PhotoImage(img)
+                        self._preview_label.configure(image=photo)
+                        self._preview_label.image = photo
+        except Exception:
+            pass
+        self.root.after(100, self._tick_preview)
 
     # ---------- modelos ----------
 
     def _ensure_models_async(self) -> None:
-        import threading
-
         def work():
             try:
                 ensure_models(progress=lambda m: self._set_status(m))
-                self._set_status("Modelos prontos.")
             except Exception as exc:
                 self._set_status(f"Falha ao baixar modelos: {exc}")
 
         threading.Thread(target=work, daemon=True).start()
 
     def _check_driver(self) -> None:
-        """Verifica se o host da camera virtual MF esta disponivel."""
-        from .vcam_host import host_exe_path
+        if VCamHost is not None:
+            from .vcam_host import host_exe_path
 
-        if host_exe_path() is None:
-            self._set_status(
-                "Camera virtual nao instalada. Rode o instalador do CamFX."
-            )
+            if host_exe_path() is None:
+                self._set_status("Camera virtual nao instalada. Rode o instalador do CamFX.")
+
+    # ---------- modo sob demanda (auto total) ----------
+
+    def _start_demand_monitor(self):
+        self._vcam_host = VCamHost()
+        if self._vcam_host.start():
+            log("vcam host MF iniciado")
+        else:
+            log("vcam host MF nao encontrado")
+
+        try:
+            self._demand_monitor = DemandMonitor()
+        except Exception as exc:
+            log(f"monitor FALHOU: {exc!r}")
+            return
+
+        self._demand_stop = threading.Event()
+
+        def loop():
+            mon = self._demand_monitor
+            empty_since = None
+            OFF_DELAY = 5.0  # espera antes de desligar (evita liga/desliga rapido)
+            while not self._demand_stop.is_set():
+                try:
+                    consumers = mon.consumer_count()
+                except Exception:
+                    consumers = 0
+                if consumers > 0:
+                    empty_since = None
+                    if not self.pipeline.running:
+                        self.pipeline.start()
+                elif self.pipeline.running:
+                    if empty_since is None:
+                        empty_since = time.monotonic()
+                    elif time.monotonic() - empty_since >= OFF_DELAY:
+                        threading.Thread(target=self.pipeline.stop, daemon=True).start()
+                        empty_since = None
+                self._demand_stop.wait(1.0)
+
+        self._demand_thread = threading.Thread(target=loop, daemon=True)
+        self._demand_thread.start()
 
     # ---------- callbacks de configuracao ----------
 
     def _on_camera_change(self, _evt=None):
-        sel = self._cam_combo.current()
-        self.config.camera_index = self._cam_indices[sel]
+        self.config.camera_index = self._cam_indices[self._cam_combo.current()]
         self.config.save()
-        self.pipeline.restart()
+        if self.pipeline.running:
+            self.pipeline.restart()
 
     def _on_toggle_blur(self):
         self.config.blur_enabled = self._blur_var.get()
@@ -195,121 +264,32 @@ class CamFXApp:
         self.config.framing_zoom = int(value) / 10.0
         self.config.save()
 
+    def _on_toggle_wb(self):
+        self.config.autowb_enabled = self._wb_var.get()
+        self.config.save()
+
     def _on_autostart(self):
         autostart.set_enabled(self._autostart_var.get())
-
-    # ---------- modo sob demanda ----------
-
-    def _start_demand_monitor(self):
-        """Monitora consumidores da CamFX e liga/desliga o pipeline sozinho."""
-        import threading
-
-        from .virtualcam import DemandMonitor
-
-        # Inicia o host da camera virtual MF (mantem "CamFX" visivel no Meet
-        # etc., mostrando tela de espera ate o pipeline ligar sob demanda).
-        from .vcam_host import VCamHost
-
-        self._vcam_host = VCamHost()
-        if self._vcam_host.start():
-            log("vcam host MF iniciado")
-        else:
-            log("vcam host MF nao encontrado (camfx_vcam.exe)")
-
-        try:
-            self._demand_monitor = DemandMonitor()
-            log("monitor de demanda iniciado")
-        except Exception as exc:
-            log(f"monitor FALHOU: {exc!r}")
-            self._set_status(f"Monitor indisponivel: {exc}. Use 'Ligar camera'.")
-            return
-
-        self._demand_stop = threading.Event()
-
-        def loop():
-            mon = self._demand_monitor
-            empty_since = None  # quando o contador ficou sem consumidores
-            last_c = -1
-            # Espera antes de desligar: evita liga/desliga em ciclos rapidos
-            # (apps frequentemente abrem e fecham a camera ao listar/testar),
-            # o que estressa o driver MSMF e pode trava-lo.
-            OFF_DELAY = 5.0
-            while not self._demand_stop.is_set():
-                try:
-                    consumers = mon.consumer_count()
-                except Exception as exc:
-                    log(f"consumer_count erro: {exc!r}")
-                    consumers = 0
-                if consumers != last_c:
-                    log(f"consumers={consumers} running={self.pipeline.running}")
-                    last_c = consumers
-                if not self._manual_override:
-                    if consumers > 0:
-                        empty_since = None
-                        if not self.pipeline.running:
-                            self._set_status("Um app abriu a CamFX. Ligando camera...")
-                            self.pipeline.start()
-                    elif self.pipeline.running:
-                        if empty_since is None:
-                            empty_since = time.monotonic()
-                        elif time.monotonic() - empty_since >= OFF_DELAY:
-                            self._set_status("Nenhum app usando a CamFX. Desligando camera.")
-                            threading.Thread(
-                                target=self.pipeline.stop, daemon=True
-                            ).start()
-                            empty_since = None
-                self.root.after(0, self._refresh_toggle_label)
-                self._demand_stop.wait(1.0)
-
-        self._demand_thread = threading.Thread(target=loop, daemon=True)
-        self._demand_thread.start()
-        self._set_status("Pronto. A camera liga sozinha quando voce abrir a CamFX num app.")
-
-    # ---------- captura ----------
-
-    def _start_capture(self):
-        self.pipeline.start()
-        self._refresh_toggle_label()
-
-    def _toggle_capture(self):
-        # Botao manual: assume o controle, ignorando o modo sob demanda ate
-        # o usuario soltar (volta ao automatico ao ligar de novo sem app).
-        if self.pipeline.running:
-            self._manual_override = False  # pausar volta ao modo automatico
-            threading.Thread(target=self.pipeline.stop, daemon=True).start()
-        else:
-            self._manual_override = True   # ligar manual mantem ligado
-            self.pipeline.start()
-        self.root.after(300, self._refresh_toggle_label)
-
-    def _refresh_toggle_label(self):
-        self._toggle_btn.config(
-            text="Pausar camera" if self.pipeline.running else "Ligar camera"
-        )
 
     # ---------- status ----------
 
     def _set_status(self, msg: str):
-        # Tkinter so e thread-safe pela main loop.
         self.root.after(0, lambda: self._status_var.set(msg))
 
     def _on_pipeline_status(self, msg: str):
         log("pipeline status: " + msg)
         self._set_status(msg)
-        self.root.after(0, self._refresh_toggle_label)
 
     def _on_pipeline_error(self, msg: str):
         log("pipeline ERRO: " + msg)
         self._set_status(msg)
-        self.root.after(0, lambda: messagebox.showerror("CamFX", msg))
-        self.root.after(0, self._refresh_toggle_label)
 
-    def _tick_fps(self):
+    def _tick_status(self):
         if self.pipeline.running:
-            self._fps_var.set(f"{self.pipeline.fps:.0f} FPS")
-        else:
-            self._fps_var.set("")
-        self.root.after(500, self._tick_fps)
+            self._set_status(f"Transmitindo na CamFX  -  {self.pipeline.fps:.0f} FPS")
+        elif self._vcam_host and self._vcam_host.running:
+            self._set_status("Pronto. Selecione 'CamFX' no seu app de video.")
+        self.root.after(1000, self._tick_status)
 
     # ---------- janela / bandeja ----------
 
@@ -328,7 +308,6 @@ class CamFXApp:
         self.config.save()
         if self._demand_stop:
             self._demand_stop.set()
-        # Nao bloqueia o fechamento esperando a camera (MSMF pode estar abrindo).
         self.pipeline.stop(join_timeout=2)
         if self._demand_monitor:
             try:
@@ -348,8 +327,6 @@ class CamFXApp:
             self.root.destroy()
         except Exception:
             pass
-        # Garante o encerramento mesmo se alguma thread nativa (MSMF/regsvr32)
-        # ficar presa, evitando processo zumbi do CamFX.
         import os
         os._exit(0)
 

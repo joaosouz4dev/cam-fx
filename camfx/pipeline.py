@@ -23,6 +23,34 @@ from .segmentation import BackgroundBlur
 # para evitar loop (capturar a propria saida) ou enquadrar a tela do OBS.
 _VIRTUAL_HINTS = ("obs virtual", "obs-camera", "obs cam")
 
+# Backends de captura, em ordem de tentativa. Algumas webcams nao abrem por
+# DirectShow ("can't be used to capture by index") mas funcionam por Media
+# Foundation (MSMF), e vice-versa. Tentamos os dois antes de desistir.
+_CAPTURE_BACKENDS = (
+    (cv2.CAP_MSMF, "MSMF"),
+    (cv2.CAP_DSHOW, "DSHOW"),
+    (cv2.CAP_ANY, "ANY"),
+)
+
+
+def open_camera(index: int, width: int | None = None, height: int | None = None,
+                fps: int | None = None):
+    """Abre a camera tentando varios backends; retorna (cap, backend) ou (None, None)."""
+    for backend, _name in _CAPTURE_BACKENDS:
+        cap = cv2.VideoCapture(index, backend)
+        if cap.isOpened():
+            if width:
+                cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+            if height:
+                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+            if fps:
+                cap.set(cv2.CAP_PROP_FPS, fps)
+            ok, _ = cap.read()
+            if ok:
+                return cap, backend
+        cap.release()
+    return None, None
+
 
 def list_cameras() -> list[tuple[int, str]]:
     """Lista (indice, nome) das cameras de entrada, sem a camera virtual.
@@ -49,12 +77,10 @@ def list_cameras() -> list[tuple[int, str]]:
 def _probe_cameras(max_index: int = 8) -> list[tuple[int, str]]:
     found = []
     for index in range(max_index):
-        cap = cv2.VideoCapture(index, cv2.CAP_DSHOW)
-        if cap.isOpened():
-            ok, _ = cap.read()
-            if ok:
-                found.append((index, f"Camera {index}"))
-        cap.release()
+        cap, _backend = open_camera(index)
+        if cap is not None:
+            found.append((index, f"Camera {index}"))
+            cap.release()
     return found
 
 
@@ -107,13 +133,16 @@ class Pipeline:
 
     def _loop(self) -> None:
         cfg = self.config
-        cap = cv2.VideoCapture(cfg.camera_index, cv2.CAP_DSHOW)
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, cfg.width)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, cfg.height)
-        cap.set(cv2.CAP_PROP_FPS, cfg.fps)
+        self._status("Abrindo camera... (pode levar alguns segundos)")
+        cap, _backend = open_camera(cfg.camera_index, cfg.width, cfg.height, cfg.fps)
 
-        if not cap.isOpened():
-            self._error(f"Nao consegui abrir a camera {cfg.camera_index}.")
+        if cap is None:
+            self._error(
+                f"Nao consegui abrir a camera {cfg.camera_index}. "
+                "Verifique se ela nao esta em uso por outro programa e se o "
+                "acesso a camera esta liberado em Configuracoes do Windows > "
+                "Privacidade e seguranca > Camera."
+            )
             self._running.clear()
             return
 

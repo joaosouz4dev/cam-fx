@@ -23,8 +23,10 @@ class Config:
     """Estado salvo entre execucoes."""
 
     camera_index: int = 0
-    width: int = 1280
-    height: int = 720
+    # 640x480 abre rapido na maioria das webcams; resolucoes altas podem fazer
+    # o backend MSMF do Windows demorar dezenas de segundos para negociar.
+    width: int = 640
+    height: int = 480
     fps: int = 30
 
     blur_enabled: bool = True

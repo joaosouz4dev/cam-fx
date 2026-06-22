@@ -50,6 +50,13 @@ O `CamFX.exe` aparece em `dist/`. Os modelos ficam embutidos no executavel.
 
 Para iniciar junto com o Windows minimizado, marque **Iniciar com o Windows**.
 
+### Observacoes sobre a camera
+
+- A captura tenta os backends do Windows em ordem (Media Foundation, depois DirectShow), porque algumas webcams nao abrem por DirectShow. A mensagem "Abrindo camera..." aparece enquanto isso acontece.
+- Algumas webcams levam de 5 a 15 segundos para abrir pelo Media Foundation na primeira vez. E normal; aguarde o status "Camera virtual ativa".
+- A resolucao padrao e 640x480, que abre rapido na maioria das cameras. Resolucoes mais altas funcionam, mas podem aumentar bastante o tempo de abertura.
+- Se aparecer erro ao abrir, confira se a camera nao esta em uso por outro programa e se o acesso esta liberado em Configuracoes do Windows > Privacidade e seguranca > Camera.
+
 ## Arquitetura
 
 ```

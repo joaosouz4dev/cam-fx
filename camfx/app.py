@@ -127,11 +127,6 @@ class CamFXApp:
         self._zoom_scale = self._slider(right, "Zoom (x10)", 10, 25,
                                         int(self.config.framing_zoom * 10), self._on_zoom)
 
-        self._wb_var = tk.BooleanVar(value=self.config.autowb_enabled)
-        ttk.Checkbutton(right, text="Corrigir cor (white balance)",
-                        variable=self._wb_var,
-                        command=self._on_toggle_wb).pack(anchor="w")
-
         ttk.Separator(right).pack(fill="x", pady=10)
 
         self._autostart_var = tk.BooleanVar(value=autostart.is_enabled())
@@ -262,10 +257,6 @@ class CamFXApp:
 
     def _on_zoom(self, value):
         self.config.framing_zoom = int(value) / 10.0
-        self.config.save()
-
-    def _on_toggle_wb(self):
-        self.config.autowb_enabled = self._wb_var.get()
         self.config.save()
 
     def _on_autostart(self):

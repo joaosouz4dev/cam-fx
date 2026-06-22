@@ -34,31 +34,51 @@ _CAPTURE_BACKENDS = (
 
 def open_camera(index: int, width: int | None = None, height: int | None = None,
                 fps: int | None = None):
-    """Abre a camera, preferindo DirectShow (pygrabber), que e bem mais rapido.
+    """Abre a camera, preferindo MSMF (Media Foundation).
 
-    Retorna (cap, backend_nome) ou (None, None). O objeto retornado tem a
-    interface read()/release()/isOpened() em ambos os casos.
+    MSMF e o MESMO backend que o Meet/Chrome usam direto, entao entrega as cores
+    processadas pela camera (white balance correto). O DirectShow/pygrabber abre
+    mais rapido, mas entrega cores "cruas" (azuladas) diferentes das que o
+    usuario ve na webcam direta. Por isso priorizamos MSMF mesmo sendo ~10s mais
+    lento; o DirectShow fica so como fallback.
+
+    Retorna (cap, backend_nome) ou (None, None).
     """
-    # 1) DirectShow via pygrabber: abre em ~2s nesta webcam (MSMF leva ~11s).
-    try:
-        from .capture import DirectShowCapture
-        from .log import log
+    from .log import log
 
-        log(f"open_camera: tentando DirectShow no indice {index}")
-        cap = DirectShowCapture(index)
-        if cap.wait_first_frame(timeout=12.0):
-            log("open_camera: DirectShow OK")
-            return cap, "DirectShow"
-        log("open_camera: DirectShow sem frame em 12s, caindo para OpenCV")
+    # 1) MSMF: cores corretas (igual a webcam direta). Lento para abrir (~10s).
+    try:
+        log(f"open_camera: tentando MSMF no indice {index}")
+        cap = cv2.VideoCapture(index, cv2.CAP_MSMF)
+        if cap.isOpened():
+            if width:
+                cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+            if height:
+                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+            if fps:
+                cap.set(cv2.CAP_PROP_FPS, fps)
+            ok, _ = cap.read()
+            if ok:
+                log("open_camera: MSMF OK")
+                return cap, "MSMF"
         cap.release()
     except Exception as exc:
-        try:
-            from .log import log
-            log(f"open_camera: DirectShow EXCECAO: {exc!r}")
-        except Exception:
-            pass
+        log(f"open_camera: MSMF EXCECAO: {exc!r}")
 
-    # 2) Fallback: backends do OpenCV (MSMF/DSHOW/ANY).
+    # 2) Fallback: DirectShow via pygrabber (rapido, mas cor pode diferir).
+    try:
+        from .capture import DirectShowCapture
+
+        log("open_camera: MSMF falhou, tentando DirectShow")
+        cap = DirectShowCapture(index)
+        if cap.wait_first_frame(timeout=12.0):
+            log("open_camera: DirectShow OK (fallback)")
+            return cap, "DirectShow"
+        cap.release()
+    except Exception as exc:
+        log(f"open_camera: DirectShow EXCECAO: {exc!r}")
+
+    # 3) Ultimo recurso: outros backends do OpenCV.
     for backend, name in _CAPTURE_BACKENDS:
         cap = cv2.VideoCapture(index, backend)
         if cap.isOpened():
@@ -115,7 +135,6 @@ class Pipeline:
         self._lock = threading.Lock()
         self._blur: BackgroundBlur | None = None
         self._framing: AutoFraming | None = None
-        self._wb = None
         self._fps_actual = 0.0
         self.on_error = None  # callback(str) opcional
         self.on_status = None  # callback(str) opcional
@@ -193,20 +212,21 @@ class Pipeline:
 
         # Aguarda a camera estabilizar exposicao/white-balance antes de
         # transmitir (evita os primeiros frames escuros/azulados).
+        self._status("Ajustando exposicao da camera...")
         if hasattr(cap, "wait_warmed"):
-            self._status("Ajustando exposicao da camera...")
             cap.wait_warmed(timeout=4.0)
+        else:
+            # MSMF (cv2): descarta ~15 frames para a camera estabilizar.
+            for _ in range(15):
+                cap.read()
 
         try:
             from .log import log as _log
 
             self._blur = BackgroundBlur() if cfg.blur_enabled else None
             self._framing = AutoFraming() if cfg.framing_enabled else None
-            from .color import WhiteBalance
-
-            self._wb = WhiteBalance(strength=cfg.autowb_strength)
             _log(f"modelos carregados: blur={self._blur is not None} "
-                 f"framing={self._framing is not None} wb={cfg.autowb_enabled}")
+                 f"framing={self._framing is not None}")
         except Exception as exc:  # modelo ausente, etc.
             cap.release()
             from .log import log as _log
@@ -285,8 +305,6 @@ class Pipeline:
 
             try:
                 with self._lock:
-                    if cfg.autowb_enabled and self._wb is not None:
-                        frame = self._wb.apply(frame)
                     if cfg.framing_enabled and self._framing:
                         frame = self._framing.process(
                             frame, ts_ms,

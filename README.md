@@ -2,23 +2,29 @@
 
 Blur de fundo e auto-framing aplicados **apenas na webcam**. Um substituto leve e focado do NVIDIA Broadcast: os efeitos rodam so na camera, nunca no microfone nem nos alto-falantes, e o app inicia minimizado na bandeja em vez de abrir maximizado no boot.
 
-Inspirado no projeto web [MediaPipe-Background-Blur-and-Auto-Framing](https://github.com/TakashiYoshinaga/MediaPipe-Background-Blur-and-Auto-Framing) de Takashi Yoshinaga, reescrito como app de desktop em Python com **driver de camera virtual proprio**, para o video processado aparecer como uma webcam chamada **CamFX** em Zoom, Google Meet, Discord, Teams e OBS, sem depender do OBS.
+Inspirado no projeto web [MediaPipe-Background-Blur-and-Auto-Framing](https://github.com/TakashiYoshinaga/MediaPipe-Background-Blur-and-Auto-Framing) de Takashi Yoshinaga, reescrito como app de desktop em Python com **camera virtual Media Foundation propria**, para o video processado aparecer como uma webcam chamada **CamFX** em **Google Meet, Microsoft Teams, Chrome, Zoom, Discord e OBS**, sem depender do OBS.
 
 ## Funcionalidades
 
-- Selecao da camera de entrada do PC.
 - Blur de fundo via MediaPipe Image Segmenter (selfie segmentation).
 - Auto-framing que segue o rosto via MediaPipe Face Detector, com movimento suavizado.
-- Saida como camera virtual **CamFX** (driver DirectShow proprio, sem OBS), selecionavel em qualquer app de video.
-- Bandeja do sistema: rodar minimizado, pausar e retomar.
-- Iniciar com o Windows ja minimizado (opcional).
-- Configuracoes persistidas entre execucoes.
+- Saida como camera virtual **CamFX** via Media Foundation (`MFCreateVirtualCamera`), enxergada por Meet/Teams/Chrome e todos os apps de video.
+- Cores iguais as da webcam (captura via Media Foundation, sem adulterar a cor).
+- 30 FPS.
+- **Modo automatico (sob demanda):** a webcam fisica liga sozinha quando um app abre a CamFX e desliga quando ninguem usa (a luz da webcam indica). Sem botao de ligar/pausar.
+- Janela com pre-visualizacao ao vivo e controles de efeito.
+- Bandeja do sistema e inicio com o Windows (minimizado).
+
+## Instalacao (usuario final)
+
+Rode o **CamFX-Setup.exe** (gerado em `installer/output/`). Ele instala o app, o
+driver de camera virtual e registra tudo automaticamente (pede permissao de
+administrador). Nenhum software de terceiros e necessario.
 
 ## Requisitos
 
-- Windows 10/11.
-- Python 3.10+ (testado em 3.12).
-- Nenhum software de terceiros. O CamFX traz e registra o proprio driver de camera virtual (`driver/CamFXSource.dll`) na primeira execucao, com permissao de administrador.
+- **Windows 11 22H2+** (a API `MFCreateVirtualCamera` exige; build 22621 ou superior).
+- Para desenvolvimento: Python 3.10+ (testado em 3.12) e, para compilar o driver, Visual Studio Build Tools com C++ e Windows SDK 10.0.26100.
 
 ## O driver de camera virtual
 

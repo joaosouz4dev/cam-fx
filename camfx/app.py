@@ -52,7 +52,9 @@ class CamFXApp:
         )
         self.tray.run_detached()
 
-        if start_minimized or self.config.start_minimized:
+        # So inicia minimizado quando lancado com --minimized (autostart do
+        # Windows). Aberto manualmente, a janela aparece normalmente.
+        if start_minimized:
             self.root.after(300, self.hide_to_tray)
         # Modo sob demanda: nao abre a camera ao iniciar. Um monitor liga o
         # pipeline so quando algum app abre a camera CamFX.
@@ -112,14 +114,8 @@ class CamFXApp:
         # Inicializacao
         self._autostart_var = tk.BooleanVar(value=autostart.is_enabled())
         ttk.Checkbutton(
-            frm, text="Iniciar com o Windows (minimizado)",
+            frm, text="Iniciar com o Windows (minimizado na bandeja)",
             variable=self._autostart_var, command=self._on_autostart,
-        ).pack(anchor="w", **pad)
-
-        self._startmin_var = tk.BooleanVar(value=self.config.start_minimized)
-        ttk.Checkbutton(
-            frm, text="Abrir minimizado na bandeja",
-            variable=self._startmin_var, command=self._on_startmin,
         ).pack(anchor="w", **pad)
 
         # Botoes
@@ -213,10 +209,6 @@ class CamFXApp:
 
     def _on_autostart(self):
         autostart.set_enabled(self._autostart_var.get())
-
-    def _on_startmin(self):
-        self.config.start_minimized = self._startmin_var.get()
-        self.config.save()
 
     # ---------- modo sob demanda ----------
 

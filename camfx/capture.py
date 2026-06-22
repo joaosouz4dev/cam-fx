@@ -24,8 +24,13 @@ class DirectShowCapture:
         self._graph = FilterGraph()
         self._graph.add_video_input_device(index)
         self._latest = None
+        self._frame_count = 0
         self._lock = threading.Lock()
         self._got = threading.Event()
+        self._warmed = threading.Event()
+        # Numero de frames a descartar para a auto-exposicao/white-balance da
+        # webcam estabilizar (senao a imagem sai escura/azulada).
+        self._warmup_frames = 20
         self._graph.add_sample_grabber(self._on_frame)
         self._graph.add_null_render()
         self._graph.prepare_preview_graph()
@@ -40,6 +45,9 @@ class DirectShowCapture:
         # pygrabber entrega RGB; convertemos para BGR (padrao do resto do app).
         with self._lock:
             self._latest = frame[:, :, ::-1].copy()
+            self._frame_count += 1
+            if self._frame_count >= self._warmup_frames:
+                self._warmed.set()
         self._got.set()
 
     def _pull_loop(self) -> None:
@@ -62,6 +70,10 @@ class DirectShowCapture:
 
     def wait_first_frame(self, timeout: float = 15.0) -> bool:
         return self._got.wait(timeout=timeout)
+
+    def wait_warmed(self, timeout: float = 4.0) -> bool:
+        """Espera a camera estabilizar exposicao/cor (descarta frames iniciais)."""
+        return self._warmed.wait(timeout=timeout)
 
     def release(self) -> None:
         self._stop.set()

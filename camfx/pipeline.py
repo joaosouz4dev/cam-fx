@@ -190,6 +190,12 @@ class Pipeline:
             self._running.clear()
             return
 
+        # Aguarda a camera estabilizar exposicao/white-balance antes de
+        # transmitir (evita os primeiros frames escuros/azulados).
+        if hasattr(cap, "wait_warmed"):
+            self._status("Ajustando exposicao da camera...")
+            cap.wait_warmed(timeout=4.0)
+
         try:
             from .log import log as _log
 

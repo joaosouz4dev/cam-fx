@@ -12,7 +12,7 @@ import time
 import tkinter as tk
 from tkinter import messagebox, ttk
 
-from . import autostart, driver_setup
+from . import autostart
 from .config import Config
 from .log import log
 from .models import ensure_models
@@ -163,26 +163,13 @@ class CamFXApp:
         threading.Thread(target=work, daemon=True).start()
 
     def _check_driver(self) -> None:
-        """Na primeira vez, oferece registrar o driver da camera virtual CamFX."""
-        if driver_setup.is_registered():
-            return
-        resp = messagebox.askyesno(
-            "CamFX - instalacao do driver",
-            "A camera virtual CamFX ainda nao esta instalada neste computador.\n\n"
-            "Para que a CamFX apareca como webcam no Zoom, Meet, Discord e OBS, "
-            "preciso registrar o driver uma unica vez (vai pedir permissao de "
-            "administrador).\n\nInstalar agora?",
-        )
-        if not resp:
-            self._set_status("Driver da CamFX nao instalado. Os efeitos nao sairao como webcam.")
-            return
-        ok, msg = driver_setup.register()
-        if ok:
-            self._set_status("Driver CamFX instalado. Selecione 'CamFX' como webcam nos apps.")
-            # reenumera cameras (a CamFX deve ser filtrada da entrada)
-            self._cameras = list_cameras()
-        else:
-            messagebox.showwarning("CamFX", f"Nao foi possivel instalar o driver: {msg}")
+        """Verifica se o host da camera virtual MF esta disponivel."""
+        from .vcam_host import host_exe_path
+
+        if host_exe_path() is None:
+            self._set_status(
+                "Camera virtual nao instalada. Rode o instalador do CamFX."
+            )
 
     # ---------- callbacks de configuracao ----------
 

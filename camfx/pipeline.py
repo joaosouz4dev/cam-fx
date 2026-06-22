@@ -115,6 +115,7 @@ class Pipeline:
         self._lock = threading.Lock()
         self._blur: BackgroundBlur | None = None
         self._framing: AutoFraming | None = None
+        self._wb = None
         self._fps_actual = 0.0
         self.on_error = None  # callback(str) opcional
         self.on_status = None  # callback(str) opcional
@@ -201,8 +202,11 @@ class Pipeline:
 
             self._blur = BackgroundBlur() if cfg.blur_enabled else None
             self._framing = AutoFraming() if cfg.framing_enabled else None
+            from .color import WhiteBalance
+
+            self._wb = WhiteBalance(strength=cfg.autowb_strength)
             _log(f"modelos carregados: blur={self._blur is not None} "
-                 f"framing={self._framing is not None}")
+                 f"framing={self._framing is not None} wb={cfg.autowb_enabled}")
         except Exception as exc:  # modelo ausente, etc.
             cap.release()
             from .log import log as _log
@@ -281,6 +285,8 @@ class Pipeline:
 
             try:
                 with self._lock:
+                    if cfg.autowb_enabled and self._wb is not None:
+                        frame = self._wb.apply(frame)
                     if cfg.framing_enabled and self._framing:
                         frame = self._framing.process(
                             frame, ts_ms,

@@ -38,6 +38,10 @@ class Config:
     framing_zoom: float = 1.4          # zoom maximo do auto-framing
     framing_smoothing: float = 0.9     # 0..1 (quanto maior, mais suave/lento)
 
+    # Correcao automatica de cor (white balance). A C505e puxa para o azul.
+    autowb_enabled: bool = True
+    autowb_strength: float = 0.8       # 0 = desliga, 1 = correcao total
+
     start_minimized: bool = True       # inicia direto na bandeja
     autostart_capture: bool = True     # ja liga a camera virtual ao abrir
 

@@ -29,6 +29,7 @@ class CamFXApp:
         self._demand_monitor = None
         self._demand_thread = None
         self._demand_stop = None
+        self._vcam_host = None
         self._manual_override = False  # True quando o usuario forcou ligar/pausar
 
         self.root = tk.Tk()
@@ -218,6 +219,16 @@ class CamFXApp:
 
         from .virtualcam import DemandMonitor
 
+        # Inicia o host da camera virtual MF (mantem "CamFX" visivel no Meet
+        # etc., mostrando tela de espera ate o pipeline ligar sob demanda).
+        from .vcam_host import VCamHost
+
+        self._vcam_host = VCamHost()
+        if self._vcam_host.start():
+            log("vcam host MF iniciado")
+        else:
+            log("vcam host MF nao encontrado (camfx_vcam.exe)")
+
         try:
             self._demand_monitor = DemandMonitor()
             log("monitor de demanda iniciado")
@@ -335,6 +346,11 @@ class CamFXApp:
         if self._demand_monitor:
             try:
                 self._demand_monitor.close()
+            except Exception:
+                pass
+        if self._vcam_host:
+            try:
+                self._vcam_host.stop()
             except Exception:
                 pass
         try:

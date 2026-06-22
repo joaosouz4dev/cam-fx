@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import sys
 import threading
+import time
 import tkinter as tk
 from tkinter import messagebox, ttk
 
@@ -234,18 +235,31 @@ class CamFXApp:
 
         def loop():
             mon = self._demand_monitor
+            empty_since = None  # quando o contador ficou sem consumidores
+            # Espera antes de desligar: evita liga/desliga em ciclos rapidos
+            # (apps frequentemente abrem e fecham a camera ao listar/testar),
+            # o que estressa o driver MSMF e pode trava-lo.
+            OFF_DELAY = 5.0
             while not self._demand_stop.is_set():
                 try:
                     consumers = mon.consumer_count()
                 except Exception:
                     consumers = 0
                 if not self._manual_override:
-                    if consumers > 0 and not self.pipeline.running:
-                        self._set_status("Um app abriu a CamFX. Ligando camera...")
-                        self.pipeline.start()
-                    elif consumers <= 0 and self.pipeline.running:
-                        self._set_status("Nenhum app usando a CamFX. Desligando camera.")
-                        threading.Thread(target=self.pipeline.stop, daemon=True).start()
+                    if consumers > 0:
+                        empty_since = None
+                        if not self.pipeline.running:
+                            self._set_status("Um app abriu a CamFX. Ligando camera...")
+                            self.pipeline.start()
+                    elif self.pipeline.running:
+                        if empty_since is None:
+                            empty_since = time.monotonic()
+                        elif time.monotonic() - empty_since >= OFF_DELAY:
+                            self._set_status("Nenhum app usando a CamFX. Desligando camera.")
+                            threading.Thread(
+                                target=self.pipeline.stop, daemon=True
+                            ).start()
+                            empty_since = None
                 self.root.after(0, self._refresh_toggle_label)
                 self._demand_stop.wait(1.0)
 

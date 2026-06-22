@@ -177,12 +177,26 @@ class Pipeline:
         start = time.perf_counter()
         frame_count = 0
         last_fps_calc = start
+        miss = 0
+        last_good = None
 
         while self.running:
             ok, frame = cap.read()
-            if not ok:
-                self._error("Perdi o sinal da camera.")
-                break
+            if not ok or frame is None:
+                # Tolera quedas momentaneas: o MSMF as vezes solta um frame
+                # vazio sem a camera ter caido. So desiste apos varias falhas.
+                miss += 1
+                if miss >= 60:  # ~2s de falhas seguidas a 30fps
+                    self._error(
+                        "Perdi o sinal da camera. Verifique se ela nao foi "
+                        "desconectada ou tomada por outro programa."
+                    )
+                    break
+                if last_good is not None:
+                    cam.send(last_good)  # mantem a saida viva com o ultimo frame
+                time.sleep(0.01)
+                continue
+            miss = 0
 
             if frame.shape[1] != cfg.width or frame.shape[0] != cfg.height:
                 frame = cv2.resize(frame, (cfg.width, cfg.height))
@@ -209,6 +223,7 @@ class Pipeline:
                 break
 
             cam.send(frame)
+            last_good = frame
             cam.sleep_until_next_frame()
 
             frame_count += 1

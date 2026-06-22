@@ -82,7 +82,14 @@ class CamFXApp:
         # Esquerda: preview ao vivo
         left = ttk.Frame(root)
         left.pack(side="left", fill="both", expand=True)
-        ttk.Label(left, text="Pre-visualizacao da CamFX", font=("Segoe UI", 10, "bold")).pack(anchor="w")
+        header = ttk.Frame(left)
+        header.pack(fill="x")
+        ttk.Label(header, text="Pre-visualizacao da CamFX",
+                  font=("Segoe UI", 10, "bold")).pack(side="left")
+        self._preview_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(header, text="Mostrar", variable=self._preview_var,
+                        command=self._on_toggle_preview).pack(side="right")
+
         self._preview_label = ttk.Label(left)
         self._preview_label.pack(pady=6)
         self._preview_placeholder = ImageTk.PhotoImage(Image.new("RGB", (WIDTH // 2, HEIGHT // 2), (20, 24, 32)))
@@ -153,8 +160,17 @@ class CamFXApp:
 
     # ---------- preview ----------
 
+    def _on_toggle_preview(self):
+        if not self._preview_var.get():
+            # Desligou: volta ao placeholder e para de atualizar.
+            self._preview_label.configure(image=self._preview_placeholder)
+            self._preview_label.image = self._preview_placeholder
+
     def _tick_preview(self):
         """Mostra o ultimo frame que esta saindo pela CamFX (lido do arquivo)."""
+        if not self._preview_var.get():
+            self.root.after(300, self._tick_preview)
+            return
         try:
             import os
 

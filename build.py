@@ -31,14 +31,6 @@ def main() -> int:
         f"{models_dir() / 'blaze_face_short_range.tflite'}{sep}models",
     ]
 
-    # Driver da camera virtual: embutido na raiz do bundle, registrado pelo app.
-    driver_dll = Path("driver") / "CamFXSource.dll"
-    if not driver_dll.exists():
-        print("AVISO: driver/CamFXSource.dll nao encontrado. "
-              "Rode driver/build_baseclasses.bat e driver/build_driver.bat antes.")
-    else:
-        add_data.append(f"{driver_dll}{sep}.")
-
     cmd = [
         sys.executable, "-m", "PyInstaller",
         "--noconfirm",
@@ -59,10 +51,27 @@ def main() -> int:
 
     print("Rodando PyInstaller...")
     result = subprocess.run(cmd)
-    if result.returncode == 0:
-        out = Path("dist") / ("CamFX.exe" if os.name == "nt" else "CamFX")
-        print(f"\nPronto: {out.resolve()}")
-    return result.returncode
+    if result.returncode != 0:
+        return result.returncode
+
+    out = Path("dist") / ("CamFX.exe" if os.name == "nt" else "CamFX")
+    print(f"\nApp: {out.resolve()}")
+
+    # Copia o driver MF e o helper para dist/, onde o instalador os pega.
+    components = [
+        Path("mfref") / "VCamSampleSource" / "x64" / "Release" / "VCamSampleSource.dll",
+        Path("mfref") / "VCamSample" / "camfx_vcam.exe",
+    ]
+    import shutil
+
+    for comp in components:
+        if comp.exists():
+            shutil.copy2(comp, Path("dist") / comp.name)
+            print(f"Componente: dist/{comp.name}")
+        else:
+            print(f"AVISO: componente nao encontrado: {comp} "
+                  "(compile o driver MF e o helper antes do instalador).")
+    return 0
 
 
 if __name__ == "__main__":

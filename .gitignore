@@ -22,3 +22,4 @@ driver/*.exe
 mfref/
 diag_*.jpg
 mf_cam*.jpg
+installer/output/

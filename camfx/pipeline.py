@@ -191,10 +191,17 @@ class Pipeline:
             return
 
         try:
-            self._blur = BackgroundBlur()
-            self._framing = AutoFraming()
+            from .log import log as _log
+
+            self._blur = BackgroundBlur() if cfg.blur_enabled else None
+            self._framing = AutoFraming() if cfg.framing_enabled else None
+            _log(f"modelos carregados: blur={self._blur is not None} "
+                 f"framing={self._framing is not None}")
         except Exception as exc:  # modelo ausente, etc.
             cap.release()
+            from .log import log as _log
+
+            _log(f"FALHA ao carregar modelos: {exc!r}")
             self._error(f"Falha ao carregar modelos: {exc}")
             self._running.clear()
             return
@@ -282,6 +289,8 @@ class Pipeline:
                             edge_softness=cfg.edge_softness,
                         )
             except Exception as exc:
+                from .log import log as _log
+                _log(f"Erro no processamento: {exc!r}")
                 self._error(f"Erro no processamento: {exc}")
                 break
 
@@ -290,6 +299,10 @@ class Pipeline:
             cam.sleep_until_next_frame()
 
             frame_count += 1
+            if frame_count == 30:  # loga uma vez, ~1s apos comecar
+                from .log import log as _log
+                _log(f"processando: blur={cfg.blur_enabled and self._blur is not None} "
+                     f"framing={cfg.framing_enabled and self._framing is not None}")
             now = time.perf_counter()
             if now - last_fps_calc >= 1.0:
                 self._fps_actual = frame_count / (now - last_fps_calc)

@@ -16,3 +16,9 @@ driver/*.dll
 driver/*.exp
 driver/*.out
 driver/*.exe
+
+# Clone pesado do sample MF da Microsoft (450MB). Versionamos so nossos
+# arquivos customizados em mfcam/src/.
+mfref/
+diag_*.jpg
+mf_cam*.jpg

@@ -17,9 +17,9 @@ class FrameGenerator
 	wil::com_ptr_nothrow<IWICBitmap> _bitmap;
 	wil::com_ptr_nothrow<IMFDXGIDeviceManager> _dxgiManager;
 
-	// CamFX: memoria compartilhada com o app Python (frames BGR).
+	// CamFX: arquivo compartilhado com o app Python (frames BGR).
+	HANDLE _camfxFile = nullptr;
 	HANDLE _camfxMap = nullptr;
-	HANDLE _camfxMutex = nullptr;
 	BYTE* _camfxShared = nullptr;
 	void OpenCamFXSharedMemory();
 	bool FillBitmapFromCamFX();   // true se copiou um frame real do app

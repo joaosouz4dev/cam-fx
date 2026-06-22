@@ -9,12 +9,13 @@
 #define CAMFX_FPS     30
 #define CAMFX_FRAME_BYTES (CAMFX_WIDTH * CAMFX_HEIGHT * 3)   // BGR24
 
-// Nome GLOBAL: o source DLL roda dentro do Frame Server (svchost, Local
-// Service) numa sessao diferente da do app. So o namespace Global e visivel
-// entre sessoes. Requer SeCreateGlobalPrivilege no lado que cria (o app eleva
-// ou o helper cria), mas a leitura/abertura funciona normalmente.
-#define CAMFX_SHMEM_NAME  L"Global\\CamFXFrameBuffer"
-#define CAMFX_MUTEX_NAME  L"Global\\CamFXFrameMutex"
+// IPC por ARQUIVO MAPEADO (nao memoria pura). O source DLL roda no Frame Server
+// (svchost, Local Service) e o app na sessao do usuario; um arquivo em
+// ProgramData (acessivel a todas as contas) cruza sessoes sem precisar do
+// namespace Global\ nem de SeCreateGlobalPrivilege.
+#define CAMFX_FRAME_FILE  L"C:\\ProgramData\\CamFX\\frame.bin"
+// Mutex tambem por arquivo nao da; usamos o campo frame_seq para coerencia
+// (escrita do header por ultimo). Mutex opcional via Global so se disponivel.
 
 #pragma pack(push, 1)
 struct CamFXSharedHeader {

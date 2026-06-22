@@ -26,21 +26,24 @@ static void CamFXLog(const char* fmt, ...)
 void FrameGenerator::OpenCamFXSharedMemory()
 {
     if (_camfxShared) return;
-    _camfxMutex = CreateMutexW(nullptr, FALSE, CAMFX_MUTEX_NAME);
-    _camfxMap = OpenFileMappingW(FILE_MAP_ALL_ACCESS, FALSE, CAMFX_SHMEM_NAME);
+    // Abre o arquivo compartilhado com leitura+escrita (le frames, escreve o
+    // contador de consumidores) e o mapeia.
+    _camfxFile = CreateFileW(CAMFX_FRAME_FILE, GENERIC_READ | GENERIC_WRITE,
+        FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL, nullptr);
     DWORD openErr = GetLastError();
-    if (!_camfxMap)
+    if (_camfxFile != INVALID_HANDLE_VALUE)
     {
-        _camfxMap = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE,
-            0, CAMFX_SHMEM_BYTES, CAMFX_SHMEM_NAME);
+        _camfxMap = CreateFileMappingW(_camfxFile, nullptr, PAGE_READWRITE,
+            0, CAMFX_SHMEM_BYTES, nullptr);
+        if (_camfxMap)
+        {
+            _camfxShared = (BYTE*)MapViewOfFile(_camfxMap, FILE_MAP_ALL_ACCESS, 0, 0,
+                CAMFX_SHMEM_BYTES);
+        }
     }
-    if (_camfxMap)
-    {
-        _camfxShared = (BYTE*)MapViewOfFile(_camfxMap, FILE_MAP_ALL_ACCESS, 0, 0,
-            CAMFX_SHMEM_BYTES);
-    }
-    CamFXLog("OpenSharedMemory: open=%p (err=%lu) mapped=%p mutex=%p",
-        (void*)_camfxMap, openErr, (void*)_camfxShared, (void*)_camfxMutex);
+    CamFXLog("OpenSharedMemory(file): file=%p (err=%lu) map=%p mapped=%p",
+        (void*)_camfxFile, openErr, (void*)_camfxMap, (void*)_camfxShared);
 }
 
 // Copia o frame BGR da shmem para o _bitmap WIC (BGRA premultiplicado).
@@ -60,40 +63,40 @@ bool FrameGenerator::FillBitmapFromCamFX()
             hdr->magic, CAMFX_MAGIC, hdr->width, hdr->height);
 
     if (hdr->magic != CAMFX_MAGIC) return false;
+    if (hdr->width != (LONG)_width || hdr->height != (LONG)_height) return false;
+
+    // Sem mutex (cruzar sessoes complica): coerencia via frame_seq. Lemos seq,
+    // copiamos os pixels, relemos seq; se mudou no meio, o frame pode estar
+    // rasgado - nesse caso descartamos (proximo frame chega em ~33ms).
+    LONG seqBefore = hdr->frame_seq;
 
     bool copied = false;
-    DWORD wait = WaitForSingleObject(_camfxMutex, 20);
-    if (wait == WAIT_OBJECT_0 || wait == WAIT_ABANDONED)
+    const BYTE* src = _camfxShared + sizeof(CamFXSharedHeader);
+    wil::com_ptr_nothrow<IWICBitmapLock> lock;
+    if (SUCCEEDED(_bitmap->Lock(nullptr, WICBitmapLockWrite, &lock)))
     {
-        if (hdr->width == (LONG)_width && hdr->height == (LONG)_height)
+        UINT stride = 0, size = 0;
+        WICInProcPointer dst = nullptr;
+        lock->GetStride(&stride);
+        lock->GetDataPointer(&size, &dst);
+        if (dst)
         {
-            const BYTE* src = _camfxShared + sizeof(CamFXSharedHeader);
-            wil::com_ptr_nothrow<IWICBitmapLock> lock;
-            if (SUCCEEDED(_bitmap->Lock(nullptr, WICBitmapLockWrite, &lock)))
+            // BGR (3 bytes) -> BGRA (4 bytes), por linha respeitando o stride.
+            for (UINT y = 0; y < _height; y++)
             {
-                UINT stride = 0, size = 0;
-                WICInProcPointer dst = nullptr;
-                lock->GetStride(&stride);
-                lock->GetDataPointer(&size, &dst);
-                if (dst)
+                const BYTE* s = src + (size_t)y * _width * 3;
+                BYTE* d = dst + (size_t)y * stride;
+                for (UINT x = 0; x < _width; x++)
                 {
-                    // BGR (3 bytes) -> BGRA (4 bytes), por linha respeitando o stride.
-                    for (UINT y = 0; y < _height; y++)
-                    {
-                        const BYTE* s = src + (size_t)y * _width * 3;
-                        BYTE* d = dst + (size_t)y * stride;
-                        for (UINT x = 0; x < _width; x++)
-                        {
-                            d[0] = s[0]; d[1] = s[1]; d[2] = s[2]; d[3] = 255;
-                            s += 3; d += 4;
-                        }
-                    }
-                    copied = true;
+                    d[0] = s[0]; d[1] = s[1]; d[2] = s[2]; d[3] = 255;
+                    s += 3; d += 4;
                 }
             }
+            copied = true;
         }
-        ReleaseMutex(_camfxMutex);
     }
+    // Se o app escreveu um novo frame durante a copia, descarta (anti-tearing).
+    if (copied && hdr->frame_seq != seqBefore) copied = false;
     return copied;
 }
 

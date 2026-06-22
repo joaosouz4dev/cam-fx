@@ -33,45 +33,6 @@ static void Log(const char* fmt, ...)
     va_list ap; va_start(ap, fmt); vfprintf(f, fmt, ap); va_end(ap);
     fprintf(f, "\n"); fclose(f);
 }
-// Habilita SeCreateGlobalPrivilege no token (vem desabilitado por padrao, mesmo
-// elevado). Necessario para criar objetos no namespace Global\.
-static void EnableGlobalPrivilege()
-{
-    HANDLE token = nullptr;
-    if (!OpenProcessToken(GetCurrentProcess(),
-        TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &token)) return;
-    LUID luid;
-    if (LookupPrivilegeValueW(nullptr, SE_CREATE_GLOBAL_NAME, &luid))
-    {
-        TOKEN_PRIVILEGES tp{};
-        tp.PrivilegeCount = 1;
-        tp.Privileges[0].Luid = luid;
-        tp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
-        AdjustTokenPrivileges(token, FALSE, &tp, sizeof(tp), nullptr, nullptr);
-        Log("EnableGlobalPrivilege: adjust err=%lu", GetLastError());
-    }
-    CloseHandle(token);
-}
-
-static void CreateSharedMemory()
-{
-    EnableGlobalPrivilege();
-    SECURITY_ATTRIBUTES sa{};
-    sa.nLength = sizeof(sa);
-    sa.bInheritHandle = FALSE;
-    // D:(A;;GA;;;WD) = Allow, Generic All, para World (Everyone).
-    BOOL okSd = ConvertStringSecurityDescriptorToSecurityDescriptorW(
-        L"D:(A;;GA;;;WD)", SDDL_REVISION_1, &sa.lpSecurityDescriptor, nullptr);
-
-    g_shmem = CreateFileMappingW(INVALID_HANDLE_VALUE, &sa, PAGE_READWRITE,
-        0, CAMFX_SHMEM_BYTES, CAMFX_SHMEM_NAME);
-    DWORD err = GetLastError();
-    Log("CreateSharedMemory: sd_ok=%d map=%p err=%lu name=%ls",
-        okSd, (void*)g_shmem, err, CAMFX_SHMEM_NAME);
-
-    CreateMutexW(&sa, FALSE, CAMFX_MUTEX_NAME);
-}
-
 // CLSID do source CamFX (mesmo do VCamSampleSource / dllmain).
 // 3cad447d-f283-4af4-a3b2-6f5363309f52
 static const wchar_t* CAMFX_CLSID = L"{3cad447d-f283-4af4-a3b2-6f5363309f52}";
@@ -87,10 +48,8 @@ static BOOL WINAPI CtrlHandler(DWORD)
 
 int wmain()
 {
-    // Cria a shmem Global com DACL aberta ANTES da camera, para o app e o DLL
-    // ja encontrarem o buffer compartilhado.
-    CreateSharedMemory();
-
+    // O buffer compartilhado agora e um arquivo em ProgramData (criado pelo app
+    // Python). O helper so cria/garante a camera virtual MF.
     HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     if (FAILED(hr)) return 1;
 

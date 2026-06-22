@@ -56,6 +56,16 @@ class VCamHost:
         if self._proc is not None:
             try:
                 self._proc.terminate()
+                self._proc.wait(timeout=3)
             except Exception:
                 pass
             self._proc = None
+        # Garante que nenhum host fique orfao (libera o icone da camera).
+        try:
+            subprocess.run(
+                ["taskkill", "/F", "/IM", "camfx_vcam.exe"],
+                creationflags=0x08000000,
+                capture_output=True,
+            )
+        except Exception:
+            pass

@@ -65,11 +65,6 @@ bool FrameGenerator::FillBitmapFromCamFX()
     if (hdr->magic != CAMFX_MAGIC) return false;
     if (hdr->width != (LONG)_width || hdr->height != (LONG)_height) return false;
 
-    // Sem mutex (cruzar sessoes complica): coerencia via frame_seq. Lemos seq,
-    // copiamos os pixels, relemos seq; se mudou no meio, o frame pode estar
-    // rasgado - nesse caso descartamos (proximo frame chega em ~33ms).
-    LONG seqBefore = hdr->frame_seq;
-
     bool copied = false;
     const BYTE* src = _camfxShared + sizeof(CamFXSharedHeader);
     wil::com_ptr_nothrow<IWICBitmapLock> lock;
@@ -95,8 +90,6 @@ bool FrameGenerator::FillBitmapFromCamFX()
             copied = true;
         }
     }
-    // Se o app escreveu um novo frame durante a copia, descarta (anti-tearing).
-    if (copied && hdr->frame_seq != seqBefore) copied = false;
     return copied;
 }
 
@@ -221,16 +214,21 @@ HRESULT FrameGenerator::Generate(IMFSample* sample, REFGUID format, IMFSample** 
 	*outSample = nullptr;
 
 	// CamFX: no caminho CPU (Meet/Chrome/Teams), preenche o bitmap com o frame
-	// processado vindo do app via memoria compartilhada. Se houver frame, pula
-	// o desenho Direct2D de demonstracao.
+	// processado vindo do app via arquivo compartilhado.
 	bool camfxFilled = false;
 	if (!HasD3DManager())
 	{
 		camfxFilled = FillBitmapFromCamFX();
+		if (camfxFilled) _everFilled = true;
 	}
 
+	// Se ja recebemos algum frame do app, NUNCA mais mostrar a tela de demo:
+	// quando nao ha frame novo, mantem o ultimo (o bitmap nao e tocado), o que
+	// evita o "piscar" entre o video e a tela colorida.
+	bool drawDemo = !camfxFilled && !_everFilled;
+
 	// render something on image common to CPU & GPU (tela de espera/demo)
-	if (!camfxFilled && _renderTarget && _textFormat && _dwrite && _whiteBrush)
+	if (drawDemo && _renderTarget && _textFormat && _dwrite && _whiteBrush)
 	{
 		_renderTarget->BeginDraw();
 		_renderTarget->Clear(D2D1::ColorF(0, 0, 1, 1));

@@ -21,6 +21,7 @@ class FrameGenerator
 	HANDLE _camfxFile = nullptr;
 	HANDLE _camfxMap = nullptr;
 	BYTE* _camfxShared = nullptr;
+	bool _everFilled = false;   // ja recebeu algum frame do app?
 	void OpenCamFXSharedMemory();
 	bool FillBitmapFromCamFX();   // true se copiou um frame real do app
 

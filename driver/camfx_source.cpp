@@ -33,6 +33,7 @@ public:
 private:
     void OpenSharedMemory();
     void CloseSharedMemory();
+    void SignalConsumer(LONG delta);    // +1 ao comecar, -1 ao parar de consumir
     void DrawWaitingScreen(BYTE* dst);  // tela quando nao ha frame do app
 
     REFERENCE_TIME m_rtFrameLength;     // duracao de um frame (100ns)
@@ -102,10 +103,27 @@ void CamFXStream::OpenSharedMemory()
 {
     if (m_pShared) return;
     m_hMutex = CreateMutexW(NULL, FALSE, CAMFX_MUTEX_NAME);
-    m_hMap = OpenFileMappingW(FILE_MAP_READ, FALSE, CAMFX_SHMEM_NAME);
-    if (m_hMap) {
-        m_pShared = (BYTE*)MapViewOfFile(m_hMap, FILE_MAP_READ, 0, 0, CAMFX_SHMEM_BYTES);
+    // Abre como leitura+escrita: o driver le frames e tambem atualiza o
+    // contador de consumidores. Se a shmem ainda nao existe (app fechado),
+    // cria para conseguir sinalizar a presenca de um consumidor.
+    m_hMap = OpenFileMappingW(FILE_MAP_ALL_ACCESS, FALSE, CAMFX_SHMEM_NAME);
+    if (!m_hMap) {
+        m_hMap = CreateFileMappingW(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE,
+            0, CAMFX_SHMEM_BYTES, CAMFX_SHMEM_NAME);
     }
+    if (m_hMap) {
+        m_pShared = (BYTE*)MapViewOfFile(m_hMap, FILE_MAP_ALL_ACCESS, 0, 0,
+            CAMFX_SHMEM_BYTES);
+    }
+}
+
+void CamFXStream::SignalConsumer(LONG delta)
+{
+    if (!m_pShared) OpenSharedMemory();
+    if (!m_pShared) return;
+    CamFXSharedHeader* hdr = (CamFXSharedHeader*)m_pShared;
+    InterlockedExchangeAdd(&hdr->consumers, delta);
+    if (hdr->consumers < 0) InterlockedExchange(&hdr->consumers, 0);
 }
 
 void CamFXStream::CloseSharedMemory()
@@ -120,11 +138,13 @@ HRESULT CamFXStream::OnThreadCreate()
     m_rtSampleTime = 0;
     m_lastSeq = -1;
     OpenSharedMemory();
+    SignalConsumer(+1);   // um app comecou a consumir a CamFX
     return NOERROR;
 }
 
 HRESULT CamFXStream::OnThreadDestroy()
 {
+    SignalConsumer(-1);   // o app parou de consumir
     CloseSharedMemory();
     return NOERROR;
 }

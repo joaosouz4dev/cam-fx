@@ -7,6 +7,7 @@ de intensidade, autostart e botao para minimizar para a bandeja.
 from __future__ import annotations
 
 import sys
+import threading
 import tkinter as tk
 from tkinter import messagebox, ttk
 
@@ -23,6 +24,10 @@ class CamFXApp:
         self.pipeline = Pipeline(self.config)
         self.pipeline.on_error = self._on_pipeline_error
         self.pipeline.on_status = self._on_pipeline_status
+        self._demand_monitor = None
+        self._demand_thread = None
+        self._demand_stop = None
+        self._manual_override = False  # True quando o usuario forcou ligar/pausar
 
         self.root = tk.Tk()
         self.root.title("CamFX - blur e auto-framing da camera")
@@ -47,8 +52,9 @@ class CamFXApp:
 
         if start_minimized or self.config.start_minimized:
             self.root.after(300, self.hide_to_tray)
-        if self.config.autostart_capture:
-            self.root.after(1200, self._start_capture)
+        # Modo sob demanda: nao abre a camera ao iniciar. Um monitor liga o
+        # pipeline so quando algum app abre a camera CamFX.
+        self.root.after(1500, self._start_demand_monitor)
 
     # ---------- construcao da UI ----------
 
@@ -210,6 +216,43 @@ class CamFXApp:
         self.config.start_minimized = self._startmin_var.get()
         self.config.save()
 
+    # ---------- modo sob demanda ----------
+
+    def _start_demand_monitor(self):
+        """Monitora consumidores da CamFX e liga/desliga o pipeline sozinho."""
+        import threading
+
+        from .virtualcam import DemandMonitor
+
+        try:
+            self._demand_monitor = DemandMonitor()
+        except Exception as exc:
+            self._set_status(f"Monitor indisponivel: {exc}. Use 'Ligar camera'.")
+            return
+
+        self._demand_stop = threading.Event()
+
+        def loop():
+            mon = self._demand_monitor
+            while not self._demand_stop.is_set():
+                try:
+                    consumers = mon.consumer_count()
+                except Exception:
+                    consumers = 0
+                if not self._manual_override:
+                    if consumers > 0 and not self.pipeline.running:
+                        self._set_status("Um app abriu a CamFX. Ligando camera...")
+                        self.pipeline.start()
+                    elif consumers <= 0 and self.pipeline.running:
+                        self._set_status("Nenhum app usando a CamFX. Desligando camera.")
+                        threading.Thread(target=self.pipeline.stop, daemon=True).start()
+                self.root.after(0, self._refresh_toggle_label)
+                self._demand_stop.wait(1.0)
+
+        self._demand_thread = threading.Thread(target=loop, daemon=True)
+        self._demand_thread.start()
+        self._set_status("Pronto. A camera liga sozinha quando voce abrir a CamFX num app.")
+
     # ---------- captura ----------
 
     def _start_capture(self):
@@ -217,11 +260,15 @@ class CamFXApp:
         self._refresh_toggle_label()
 
     def _toggle_capture(self):
+        # Botao manual: assume o controle, ignorando o modo sob demanda ate
+        # o usuario soltar (volta ao automatico ao ligar de novo sem app).
         if self.pipeline.running:
-            self.pipeline.stop()
+            self._manual_override = False  # pausar volta ao modo automatico
+            threading.Thread(target=self.pipeline.stop, daemon=True).start()
         else:
+            self._manual_override = True   # ligar manual mantem ligado
             self.pipeline.start()
-        self.root.after(200, self._refresh_toggle_label)
+        self.root.after(300, self._refresh_toggle_label)
 
     def _refresh_toggle_label(self):
         self._toggle_btn.config(
@@ -265,12 +312,27 @@ class CamFXApp:
 
     def quit(self):
         self.config.save()
-        self.pipeline.stop()
+        if self._demand_stop:
+            self._demand_stop.set()
+        # Nao bloqueia o fechamento esperando a camera (MSMF pode estar abrindo).
+        self.pipeline.stop(join_timeout=2)
+        if self._demand_monitor:
+            try:
+                self._demand_monitor.close()
+            except Exception:
+                pass
         try:
             self.tray.stop()
         except Exception:
             pass
-        self.root.after(0, self.root.destroy)
+        try:
+            self.root.destroy()
+        except Exception:
+            pass
+        # Garante o encerramento mesmo se alguma thread nativa (MSMF/regsvr32)
+        # ficar presa, evitando processo zumbi do CamFX.
+        import os
+        os._exit(0)
 
     def run(self):
         self.root.mainloop()

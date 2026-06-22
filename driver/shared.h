@@ -24,6 +24,7 @@ struct CamFXSharedHeader {
     volatile LONG height;       // altura atual
     volatile LONG frame_seq;    // incrementa a cada frame novo do app
     volatile LONGLONG ts_qpc;   // timestamp (QueryPerformanceCounter) do frame
+    volatile LONG consumers;    // quantos apps estao consumindo a CamFX agora
 };
 #pragma pack(pop)
 

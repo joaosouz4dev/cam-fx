@@ -22,9 +22,11 @@ BPP = 3
 FRAME_BYTES = WIDTH * HEIGHT * BPP
 
 # struct CamFXSharedHeader: LONG magic, LONG width, LONG height, LONG frame_seq,
-# LONGLONG ts_qpc  -> 4 int32 + 1 int64 = 24 bytes (com pack(1)).
-_HEADER_FMT = "<iiiiq"
+# LONGLONG ts_qpc, LONG consumers  -> 4 int32 + int64 + int32 = 28 bytes (pack 1).
+_HEADER_FMT = "<iiiiqi"
 _HEADER_SIZE = struct.calcsize(_HEADER_FMT)
+# Offset do campo 'consumers' dentro do header (apos magic,w,h,seq,ts).
+_CONSUMERS_OFFSET = struct.calcsize("<iiiiq")
 SHMEM_BYTES = _HEADER_SIZE + FRAME_BYTES
 
 MAGIC = 0x43414D46  # 'CAMF'
@@ -100,14 +102,21 @@ class CamFXVirtualCamera:
             frame_bgr = np.ascontiguousarray(frame_bgr)
 
         self._seq += 1
-        header = struct.pack(_HEADER_FMT, MAGIC, WIDTH, HEIGHT, self._seq, 0)
+        # Escreve apenas magic..ts (24 bytes); NAO toca em 'consumers', que e
+        # mantido pelo driver. O frame vai logo apos o header completo.
+        header = struct.pack("<iiiiq", MAGIC, WIDTH, HEIGHT, self._seq, 0)
 
         _kernel32.WaitForSingleObject(self._h_mutex, 50)
         try:
-            ctypes.memmove(self._view, header, _HEADER_SIZE)
+            ctypes.memmove(self._view, header, len(header))
             ctypes.memmove(self._view + _HEADER_SIZE, frame_bgr.ctypes.data, FRAME_BYTES)
         finally:
             _kernel32.ReleaseMutex(self._h_mutex)
+
+    def consumer_count(self) -> int:
+        """Quantos apps estao consumindo a CamFX agora (lido do header)."""
+        raw = ctypes.string_at(self._view + _CONSUMERS_OFFSET, 4)
+        return struct.unpack("<i", raw)[0]
 
     def sleep_until_next_frame(self) -> None:
         # O ritmo de entrega e controlado pelo driver; aqui so cedemos a CPU.
@@ -148,3 +157,37 @@ def is_driver_registered() -> bool:
         return "CamFX" in FilterGraph().get_input_devices()
     except Exception:
         return False
+
+
+class DemandMonitor:
+    """Mantem a memoria compartilhada viva e observa o contador de consumidores.
+
+    Permite o modo sob demanda: o app fica dormindo (sem abrir a webcam) e so
+    liga o pipeline quando algum aplicativo abre a camera CamFX. Como a shmem
+    persiste enquanto o monitor vive, o driver consegue registrar consumidores
+    mesmo antes de o pipeline comecar a enviar frames.
+    """
+
+    def __init__(self):
+        self._h_map = _kernel32.CreateFileMappingW(
+            INVALID_HANDLE_VALUE, None, PAGE_READWRITE, 0, SHMEM_BYTES, SHMEM_NAME
+        )
+        if not self._h_map:
+            raise RuntimeError("Nao consegui criar a shmem do monitor CamFX.")
+        self._view = _kernel32.MapViewOfFile(
+            self._h_map, FILE_MAP_ALL_ACCESS, 0, 0, SHMEM_BYTES
+        )
+        if not self._view:
+            raise RuntimeError("Nao consegui mapear a shmem do monitor CamFX.")
+
+    def consumer_count(self) -> int:
+        raw = ctypes.string_at(self._view + _CONSUMERS_OFFSET, 4)
+        return struct.unpack("<i", raw)[0]
+
+    def close(self):
+        if getattr(self, "_view", None):
+            _kernel32.UnmapViewOfFile(self._view)
+            self._view = None
+        if getattr(self, "_h_map", None):
+            _kernel32.CloseHandle(self._h_map)
+            self._h_map = None

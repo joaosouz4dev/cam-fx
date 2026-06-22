@@ -110,10 +110,13 @@ class Pipeline:
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
 
-    def stop(self) -> None:
+    def stop(self, join_timeout: float = 45) -> None:
         self._running.clear()
         if self._thread:
-            self._thread.join(timeout=3)
+            # Espera a abertura lenta da camera (MSMF) terminar e a thread
+            # encerrar, evitando duas threads _loop concorrentes. No encerramento
+            # do app, use join_timeout pequeno para nao travar o fechamento.
+            self._thread.join(timeout=join_timeout)
             self._thread = None
 
     def restart(self) -> None:
@@ -165,10 +168,16 @@ class Pipeline:
             )
         finally:
             cap.release()
-            if self._blur:
-                self._blur.close()
-            if self._framing:
-                self._framing.close()
+            # Fecha os modelos sob o mesmo lock do processamento, para nunca
+            # destruir o segmenter/detector enquanto um frame esta em process()
+            # (evita o erro 'Task runner is currently not running').
+            with self._lock:
+                if self._blur:
+                    self._blur.close()
+                    self._blur = None
+                if self._framing:
+                    self._framing.close()
+                    self._framing = None
             self._running.clear()
             self._status("Parado.")
 

@@ -14,6 +14,7 @@ from tkinter import messagebox, ttk
 
 from . import autostart, driver_setup
 from .config import Config
+from .log import log
 from .models import ensure_models
 from .pipeline import Pipeline, list_cameras
 from .tray import TrayIcon
@@ -227,7 +228,9 @@ class CamFXApp:
 
         try:
             self._demand_monitor = DemandMonitor()
+            log("monitor de demanda iniciado")
         except Exception as exc:
+            log(f"monitor FALHOU: {exc!r}")
             self._set_status(f"Monitor indisponivel: {exc}. Use 'Ligar camera'.")
             return
 
@@ -236,6 +239,7 @@ class CamFXApp:
         def loop():
             mon = self._demand_monitor
             empty_since = None  # quando o contador ficou sem consumidores
+            last_c = -1
             # Espera antes de desligar: evita liga/desliga em ciclos rapidos
             # (apps frequentemente abrem e fecham a camera ao listar/testar),
             # o que estressa o driver MSMF e pode trava-lo.
@@ -243,8 +247,12 @@ class CamFXApp:
             while not self._demand_stop.is_set():
                 try:
                     consumers = mon.consumer_count()
-                except Exception:
+                except Exception as exc:
+                    log(f"consumer_count erro: {exc!r}")
                     consumers = 0
+                if consumers != last_c:
+                    log(f"consumers={consumers} running={self.pipeline.running}")
+                    last_c = consumers
                 if not self._manual_override:
                     if consumers > 0:
                         empty_since = None
@@ -296,10 +304,12 @@ class CamFXApp:
         self.root.after(0, lambda: self._status_var.set(msg))
 
     def _on_pipeline_status(self, msg: str):
+        log("pipeline status: " + msg)
         self._set_status(msg)
         self.root.after(0, self._refresh_toggle_label)
 
     def _on_pipeline_error(self, msg: str):
+        log("pipeline ERRO: " + msg)
         self._set_status(msg)
         self.root.after(0, lambda: messagebox.showerror("CamFX", msg))
         self.root.after(0, self._refresh_toggle_label)

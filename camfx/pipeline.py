@@ -34,8 +34,32 @@ _CAPTURE_BACKENDS = (
 
 def open_camera(index: int, width: int | None = None, height: int | None = None,
                 fps: int | None = None):
-    """Abre a camera tentando varios backends; retorna (cap, backend) ou (None, None)."""
-    for backend, _name in _CAPTURE_BACKENDS:
+    """Abre a camera, preferindo DirectShow (pygrabber), que e bem mais rapido.
+
+    Retorna (cap, backend_nome) ou (None, None). O objeto retornado tem a
+    interface read()/release()/isOpened() em ambos os casos.
+    """
+    # 1) DirectShow via pygrabber: abre em ~2s nesta webcam (MSMF leva ~11s).
+    try:
+        from .capture import DirectShowCapture
+        from .log import log
+
+        log(f"open_camera: tentando DirectShow no indice {index}")
+        cap = DirectShowCapture(index)
+        if cap.wait_first_frame(timeout=12.0):
+            log("open_camera: DirectShow OK")
+            return cap, "DirectShow"
+        log("open_camera: DirectShow sem frame em 12s, caindo para OpenCV")
+        cap.release()
+    except Exception as exc:
+        try:
+            from .log import log
+            log(f"open_camera: DirectShow EXCECAO: {exc!r}")
+        except Exception:
+            pass
+
+    # 2) Fallback: backends do OpenCV (MSMF/DSHOW/ANY).
+    for backend, name in _CAPTURE_BACKENDS:
         cap = cv2.VideoCapture(index, backend)
         if cap.isOpened():
             if width:
@@ -46,7 +70,7 @@ def open_camera(index: int, width: int | None = None, height: int | None = None,
                 cap.set(cv2.CAP_PROP_FPS, fps)
             ok, _ = cap.read()
             if ok:
-                return cap, backend
+                return cap, name
         cap.release()
     return None, None
 
@@ -135,6 +159,24 @@ class Pipeline:
 
     def _loop(self) -> None:
         cfg = self.config
+        # O DirectShow (pygrabber/COM) exige COM inicializado NESTA thread.
+        # Sem isso, a captura rapida falha com "CoInitialize nao foi chamado" e
+        # cai no MSMF lento (~16s). Inicializa em modo apartment (STA).
+        _com_initialized = False
+        try:
+            import pythoncom
+
+            pythoncom.CoInitialize()
+            _com_initialized = True
+        except Exception:
+            try:
+                import ctypes
+
+                ctypes.windll.ole32.CoInitialize(None)
+                _com_initialized = True
+            except Exception:
+                pass
+
         self._status("Abrindo camera... (pode levar alguns segundos)")
         cap, _backend = open_camera(cfg.camera_index, cfg.width, cfg.height, cfg.fps)
 
@@ -178,6 +220,18 @@ class Pipeline:
                 if self._framing:
                     self._framing.close()
                     self._framing = None
+            if _com_initialized:
+                try:
+                    import pythoncom
+
+                    pythoncom.CoUninitialize()
+                except Exception:
+                    try:
+                        import ctypes
+
+                        ctypes.windll.ole32.CoUninitialize()
+                    except Exception:
+                        pass
             self._running.clear()
             self._status("Parado.")
 

@@ -48,6 +48,10 @@ def main() -> int:
         "--name", "CamFX",
         # MediaPipe carrega binarios/grafos via arquivos de dados:
         "--collect-all", "mediapipe",
+        # comtypes gera wrappers COM; precisa vir completo para o pygrabber
+        # (captura DirectShow rapida) funcionar dentro do .exe.
+        "--collect-all", "comtypes",
+        "--collect-submodules", "pygrabber",
     ]
     for entry in add_data:
         cmd += ["--add-data", entry]

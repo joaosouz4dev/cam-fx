@@ -19,10 +19,7 @@ class DirectShowCapture:
     """Captura por DirectShow. read() retorna (ok, frame_bgr)."""
 
     def __init__(self, index: int):
-        from pygrabber.dshow_graph import FilterGraph
-
-        self._graph = FilterGraph()
-        self._graph.add_video_input_device(index)
+        self._index = index
         self._latest = None
         self._frame_count = 0
         self._lock = threading.Lock()
@@ -31,15 +28,57 @@ class DirectShowCapture:
         # Numero de frames a descartar para a auto-exposicao/white-balance da
         # webcam estabilizar (senao a imagem sai escura/azulada).
         self._warmup_frames = 20
-        self._graph.add_sample_grabber(self._on_frame)
-        self._graph.add_null_render()
-        self._graph.prepare_preview_graph()
-        self._graph.run()
 
-        # Thread que puxa frames continuamente (o pygrabber e pull-based).
+        # Tenta montar o grafo em 1280x720; se o pygrabber nao conectar nesse
+        # formato (alguns drivers exigem decoder), faz fallback para o padrao
+        # (640x480), que e rapido e estavel.
+        if not self._build_graph(want_hd=True):
+            self._build_graph(want_hd=False)
+
         self._stop = threading.Event()
         self._puller = threading.Thread(target=self._pull_loop, daemon=True)
         self._puller.start()
+
+    def _build_graph(self, want_hd: bool) -> bool:
+        from pygrabber.dshow_graph import FilterGraph
+
+        try:
+            self._graph = FilterGraph()
+            self._graph.add_video_input_device(self._index)
+            if want_hd:
+                self._select_format(1280, 720)
+            self._graph.add_sample_grabber(self._on_frame)
+            self._graph.add_null_render()
+            self._graph.prepare_preview_graph()
+            self._graph.run()
+            return True
+        except Exception:
+            try:
+                self._graph.stop()
+            except Exception:
+                pass
+            return False
+
+    def _select_format(self, want_w: int, want_h: int) -> None:
+        """Pede o formato want_w x want_h a webcam (prefere MJPG), se existir."""
+        try:
+            dev = self._graph.get_input_device()
+            formats = dev.get_formats()
+            best = None
+            for i, fmt in enumerate(formats):
+                w = fmt.get("width")
+                h = fmt.get("height")
+                mt = (fmt.get("media_type_str") or "").upper()
+                if w == want_w and h == want_h:
+                    # Prefere formatos nao-comprimidos (YUY2/RGB) que conectam ao
+                    # sample grabber sem decoder; MJPG quebra o grafo do pygrabber.
+                    score = 0 if "MJPG" in mt else 1
+                    if best is None or score > best[0]:
+                        best = (score, i)
+            if best is not None:
+                dev.set_format(best[1])
+        except Exception:
+            pass
 
     def _on_frame(self, frame: np.ndarray) -> None:
         # pygrabber entrega RGB; convertemos para BGR (padrao do resto do app).

@@ -23,8 +23,8 @@ HRESULT MediaStream::Initialize(IMFMediaSource* source, int index)
 	// set 1 here to force RGB32 only
 	auto types = wil::make_unique_cotaskmem_array<wil::com_ptr_nothrow<IMFMediaType>>(2);
 
-#define NUM_IMAGE_COLS 1280  // CamFX: alinhado com a shmem (CAMFX_WIDTH)
-#define NUM_IMAGE_ROWS 720   // CamFX: alinhado com a shmem (CAMFX_HEIGHT)
+#define NUM_IMAGE_COLS 640  // CamFX: alinhado com a shmem (CAMFX_WIDTH)
+#define NUM_IMAGE_ROWS 480  // CamFX: alinhado com a shmem (CAMFX_HEIGHT)
 
 	wil::com_ptr_nothrow<IMFMediaType> rgbType;
 	RETURN_IF_FAILED(MFCreateMediaType(&rgbType));

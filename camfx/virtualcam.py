@@ -19,8 +19,8 @@ import struct
 
 import numpy as np
 
-WIDTH = 1280
-HEIGHT = 720
+WIDTH = 640
+HEIGHT = 480
 BPP = 3
 FRAME_BYTES = WIDTH * HEIGHT * BPP
 

@@ -1,0 +1,13 @@
+# CamFX - dependencias de runtime
+# MediaPipe Tasks (Image Segmenter + Face Detector) - visao computacional do Google
+mediapipe==0.10.18
+# Processamento de imagem (blur, composicao, redimensionamento)
+opencv-python==4.10.0.84
+numpy==1.26.4
+# Camera virtual (usa o backend do OBS Virtual Camera no Windows)
+pyvirtualcam==0.12.0
+# Bandeja do sistema (icone, menu, iniciar minimizado)
+pystray==0.19.5
+Pillow==10.4.0
+# Enumeracao de cameras por nome (DirectShow) para filtrar a camera virtual
+pygrabber==0.2

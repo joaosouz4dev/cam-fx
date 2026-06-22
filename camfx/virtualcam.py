@@ -30,8 +30,10 @@ _CONSUMERS_OFFSET = struct.calcsize("<iiiiq")
 SHMEM_BYTES = _HEADER_SIZE + FRAME_BYTES
 
 MAGIC = 0x43414D46  # 'CAMF'
-SHMEM_NAME = "Local\\CamFXFrameBuffer"
-MUTEX_NAME = "Local\\CamFXFrameMutex"
+# Global: o source da camera virtual roda no Frame Server (svchost, Local
+# Service), em outra sessao. So o namespace Global e visivel entre sessoes.
+SHMEM_NAME = "Global\\CamFXFrameBuffer"
+MUTEX_NAME = "Global\\CamFXFrameMutex"
 
 # Win32 - tipos explicitos para handles/ponteiros 64-bit.
 from ctypes import wintypes
@@ -46,6 +48,10 @@ _kernel32.CreateFileMappingW.argtypes = [
     wintypes.HANDLE, ctypes.c_void_p, wintypes.DWORD,
     wintypes.DWORD, wintypes.DWORD, wintypes.LPCWSTR,
 ]
+_kernel32.OpenFileMappingW.restype = wintypes.HANDLE
+_kernel32.OpenFileMappingW.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.LPCWSTR]
+_kernel32.OpenMutexW.restype = wintypes.HANDLE
+_kernel32.OpenMutexW.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.LPCWSTR]
 _kernel32.MapViewOfFile.restype = ctypes.c_void_p
 _kernel32.MapViewOfFile.argtypes = [
     wintypes.HANDLE, wintypes.DWORD, wintypes.DWORD, wintypes.DWORD, ctypes.c_size_t,
@@ -72,13 +78,24 @@ class CamFXVirtualCamera:
         self.device = "CamFX"
         self._seq = 0
 
-        self._h_map = _kernel32.CreateFileMappingW(
-            INVALID_HANDLE_VALUE, None, PAGE_READWRITE, 0, SHMEM_BYTES, SHMEM_NAME
-        )
+        # A shmem Global e criada pelo helper camfx_vcam.exe (elevado, com
+        # privilegio e DACL aberta). Aqui apenas ABRIMOS a existente, com retry
+        # caso o helper ainda esteja subindo.
+        import time as _t
+
         self._view = None
         self._h_mutex = None
+        self._h_map = None
+        for _ in range(50):  # ate ~5s esperando o helper criar
+            self._h_map = _kernel32.OpenFileMappingW(FILE_MAP_ALL_ACCESS, False, SHMEM_NAME)
+            if self._h_map:
+                break
+            _t.sleep(0.1)
         if not self._h_map:
-            raise RuntimeError("Nao consegui criar a memoria compartilhada da CamFX.")
+            raise RuntimeError(
+                "Memoria compartilhada da CamFX nao encontrada. O servico da "
+                "camera virtual (camfx_vcam) precisa estar rodando."
+            )
 
         self._view = _kernel32.MapViewOfFile(
             self._h_map, FILE_MAP_ALL_ACCESS, 0, 0, SHMEM_BYTES
@@ -88,9 +105,9 @@ class CamFXVirtualCamera:
 
         self._buf = (ctypes.c_char * SHMEM_BYTES).from_address(self._view)
 
-        self._h_mutex = _kernel32.CreateMutexW(None, False, MUTEX_NAME)
+        self._h_mutex = _kernel32.OpenMutexW(0x1F0001, False, MUTEX_NAME)  # MUTEX_ALL_ACCESS
         if not self._h_mutex:
-            raise RuntimeError("Nao consegui criar o mutex da CamFX.")
+            raise RuntimeError("Mutex da CamFX nao encontrado.")
 
     def send(self, frame_bgr: np.ndarray) -> None:
         """Envia um frame BGR (qualquer tamanho; sera ajustado para 640x480)."""

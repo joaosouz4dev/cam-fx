@@ -44,10 +44,30 @@ Construido sobre o sample oficial da Microsoft
 - A camera virtual MF NAO aparece em `Get-PnpDevice`; so via enumeracao Media Foundation (ex.: OpenCV CAP_MSMF, ou os proprios apps).
 - A camera vive enquanto o processo que chamou `MFCreateVirtualCamera` estiver rodando. No produto final, o proprio app CamFX deve manter esse processo.
 
-## Proximos passos
+## Progresso (atualizado)
 
-1. Trazer os arquivos restantes do source MF para ca (ou um vcxproj proprio renomeado para CamFX).
-2. Renomear "VCamSample"/"VCamSampleSource" -> "CamFX".
-3. Fazer o app Python (ou um helper) chamar `MFCreateVirtualCamera` e manter a camera viva, integrando com o modo sob demanda ja existente.
-4. Instalador (Inno Setup): copia para Program Files, registra o DLL, cria atalho.
-5. Validar no Meet, Teams e Chrome.
+- ✅ Helper headless `camfx_vcam.cpp`: cria a camera MF (`MFCreateVirtualCamera`) e a mantem viva sem janela/dialogo. Funciona: a camera "CamFX" aparece via Media Foundation (640x480).
+- ✅ DLL le a shmem e tem o caminho CPU (Meet/Chrome) preparado para copiar o frame BGR do app.
+- ⚠️ **BLOQUEIO ATUAL - IPC entre sessoes:** o app Python roda na sessao do usuario; o DLL do source roda no **Frame Server (svchost, Local Service)**, outra sessao. A memoria compartilhada precisa ser do namespace `Global\` para cruzar sessoes. Problemas encontrados:
+  - Python sem admin NAO cria/abre `Global\` (erro 5, falta SeCreateGlobalPrivilege).
+  - O helper, mesmo elevado, falha ao criar `Global\` (err=5) apesar de `AdjustTokenPrivileges` retornar 0 - o `SeCreateGlobalPrivilege` aparentemente nao esta presente/efetivo no token nesta maquina/politica.
+
+## PROXIMO PASSO RECOMENDADO: trocar shmem por arquivo mapeado em disco
+
+Em vez de `CreateFileMapping(INVALID_HANDLE_VALUE, "Global\\...")`, usar um
+**arquivo real mapeado** em `C:\ProgramData\CamFX\frame.bin` (pasta acessivel a
+todas as sessoes/contas, incluindo Local Service). File-backed mapping funciona
+entre sessoes SEM precisar de namespace Global nem privilegio especial:
+- App Python: abre/cria o arquivo, MapViewOfFile, escreve frames.
+- DLL (Frame Server): abre o mesmo arquivo, MapViewOfFile, le.
+- Sincronizacao: usar o proprio campo `frame_seq` (escrita atomica) ou um mutex
+  com DACL aberta; ou ate dispensar mutex (frame parcial ocasional e toleravel).
+Garantir DACL aberta na pasta ProgramData\CamFX (o instalador cria com permissao
+para todos).
+
+## Demais passos
+
+1. Implementar o file-backed mapping (acima) nos 3 lados (camfx_vcam.cpp/helper, FrameGenerator.cpp/DLL, camfx/virtualcam.py).
+2. Validar o video com blur chegando no Meet/Teams/Chrome.
+3. Renomear "VCamSample"/"VCamSampleSource" -> "CamFX" e integrar o helper ao modo sob demanda do app.
+4. Instalador (Inno Setup): copia para Program Files, registra o DLL, cria pasta ProgramData com DACL, cria atalho.

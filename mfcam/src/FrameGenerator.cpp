@@ -6,6 +6,21 @@
 #include "FrameGenerator.h"
 #include "CamFXShared.h"
 
+// Log de diagnostico do DLL (roda no Frame Server). Grava em ProgramData, que
+// e acessivel a servicos. Remover depois de validar.
+static void CamFXLog(const char* fmt, ...)
+{
+    CreateDirectoryA("C:\\ProgramData\\CamFX", nullptr);
+    FILE* f = nullptr;
+    fopen_s(&f, "C:\\ProgramData\\CamFX\\dll.log", "a");
+    if (!f) return;
+    va_list ap; va_start(ap, fmt);
+    vfprintf(f, fmt, ap);
+    va_end(ap);
+    fprintf(f, "\n");
+    fclose(f);
+}
+
 // Abre (uma vez) a memoria compartilhada do app CamFX. Cria se ainda nao existe,
 // para que o contador de consumidores ja funcione antes do app enviar frames.
 void FrameGenerator::OpenCamFXSharedMemory()
@@ -13,6 +28,7 @@ void FrameGenerator::OpenCamFXSharedMemory()
     if (_camfxShared) return;
     _camfxMutex = CreateMutexW(nullptr, FALSE, CAMFX_MUTEX_NAME);
     _camfxMap = OpenFileMappingW(FILE_MAP_ALL_ACCESS, FALSE, CAMFX_SHMEM_NAME);
+    DWORD openErr = GetLastError();
     if (!_camfxMap)
     {
         _camfxMap = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE,
@@ -23,6 +39,8 @@ void FrameGenerator::OpenCamFXSharedMemory()
         _camfxShared = (BYTE*)MapViewOfFile(_camfxMap, FILE_MAP_ALL_ACCESS, 0, 0,
             CAMFX_SHMEM_BYTES);
     }
+    CamFXLog("OpenSharedMemory: open=%p (err=%lu) mapped=%p mutex=%p",
+        (void*)_camfxMap, openErr, (void*)_camfxShared, (void*)_camfxMutex);
 }
 
 // Copia o frame BGR da shmem para o _bitmap WIC (BGRA premultiplicado).
@@ -35,6 +53,11 @@ bool FrameGenerator::FillBitmapFromCamFX()
     auto hdr = (CamFXSharedHeader*)_camfxShared;
     // Sinaliza presenca de consumidor (o app liga a camera sob demanda).
     InterlockedExchange(&hdr->consumers, 1);
+
+    static int logCount = 0;
+    if (logCount++ % 60 == 0)
+        CamFXLog("FillBitmap: magic=0x%08X want=0x%08X w=%ld h=%ld",
+            hdr->magic, CAMFX_MAGIC, hdr->width, hdr->height);
 
     if (hdr->magic != CAMFX_MAGIC) return false;
 

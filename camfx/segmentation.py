@@ -49,13 +49,27 @@ class BackgroundBlur:
         )
         self._last_mask = mask
 
-        kernel = self._odd(blur_strength)
-        blurred = cv2.GaussianBlur(frame_bgr, (kernel, kernel), 0)
+        # Blur rapido: reduz a imagem, borra pequeno e amplia de volta. Borrar
+        # numa imagem 1/3 do tamanho e ~9x mais barato que um GaussianBlur
+        # grande na resolucao cheia, com resultado visualmente equivalente.
+        h, w = frame_bgr.shape[:2]
+        scale = 0.35
+        small = cv2.resize(frame_bgr, (max(1, int(w * scale)), max(1, int(h * scale))),
+                           interpolation=cv2.INTER_LINEAR)
+        k = self._odd(max(3, int(blur_strength * scale)))
+        small = cv2.GaussianBlur(small, (k, k), 0)
+        blurred = cv2.resize(small, (w, h), interpolation=cv2.INTER_LINEAR)
 
-        # Composicao alpha: pessoa nitida sobre fundo borrado.
-        alpha = mask[:, :, np.newaxis]
-        out = frame_bgr * alpha + blurred * (1.0 - alpha)
-        return out.astype(np.uint8)
+        # Composicao alpha eficiente: out = blurred + mask*(frame - blurred).
+        # float32 (nao float64) com operacoes in-place: ~3x mais rapido que a
+        # expressao frame*a + blurred*(1-a).
+        alpha = mask[:, :, np.newaxis].astype(np.float32, copy=False)
+        fg = frame_bgr.astype(np.float32)
+        bg = blurred.astype(np.float32)
+        fg -= bg          # frame - blurred
+        fg *= alpha       # mask*(frame - blurred)
+        fg += bg          # blurred + mask*(frame - blurred)
+        return fg.astype(np.uint8)
 
     def _refine_mask(
         self,

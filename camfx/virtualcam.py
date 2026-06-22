@@ -81,9 +81,24 @@ class CamFXVirtualCamera:
         return struct.unpack("<i", raw)[0]
 
     def sleep_until_next_frame(self) -> None:
+        # Dorme apenas o tempo restante ate o proximo frame, descontando o tempo
+        # ja gasto no processamento. Antes dormia o intervalo inteiro, somando ao
+        # tempo de processo e derrubando o FPS pela metade.
         import time
 
-        time.sleep(1.0 / max(1, self.fps))
+        period = 1.0 / max(1, self.fps)
+        now = time.perf_counter()
+        nxt = getattr(self, "_next_t", None)
+        if nxt is None:
+            self._next_t = now + period
+            return
+        remaining = nxt - now
+        if remaining > 0:
+            time.sleep(remaining)
+            self._next_t = nxt + period
+        else:
+            # Atrasado: nao dorme e realinha o relogio para nao acumular.
+            self._next_t = now + period
 
     def close(self) -> None:
         # Zera o magic para o leitor voltar a tela de espera.

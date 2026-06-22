@@ -4,8 +4,9 @@ mediapipe==0.10.18
 # Processamento de imagem (blur, composicao, redimensionamento)
 opencv-python==4.10.0.84
 numpy==1.26.4
-# Camera virtual (usa o backend do OBS Virtual Camera no Windows)
-pyvirtualcam==0.12.0
+# A camera virtual usa o driver proprio CamFX (driver/CamFXSource.dll),
+# alimentado por memoria compartilhada em camfx/virtualcam.py. Sem dependencia
+# externa de runtime para isso.
 # Bandeja do sistema (icone, menu, iniciar minimizado)
 pystray==0.19.5
 Pillow==10.4.0

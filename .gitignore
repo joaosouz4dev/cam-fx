@@ -7,3 +7,12 @@ dist/
 *.spec
 *.tflite
 debug*.log
+
+# Artefatos de build do driver C++ (codigo-fonte e versionado, binarios nao)
+driver/baseclasses/
+driver/*.obj
+driver/*.lib
+driver/*.dll
+driver/*.exp
+driver/*.out
+driver/*.exe

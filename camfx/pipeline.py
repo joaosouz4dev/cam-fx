@@ -11,17 +11,16 @@ import threading
 import time
 
 import cv2
-import pyvirtualcam
-from pyvirtualcam import PixelFormat
 
 from .config import Config
 from .framing import AutoFraming
 from .segmentation import BackgroundBlur
+from .virtualcam import CamFXVirtualCamera
 
 
 # Nomes de saidas virtuais que NAO devem aparecer como camera de entrada,
-# para evitar loop (capturar a propria saida) ou enquadrar a tela do OBS.
-_VIRTUAL_HINTS = ("obs virtual", "obs-camera", "obs cam")
+# para evitar loop (capturar a propria saida da CamFX ou a tela do OBS).
+_VIRTUAL_HINTS = ("obs virtual", "obs-camera", "obs cam", "camfx")
 
 # Backends de captura, em ordem de tentativa. Algumas webcams nao abrem por
 # DirectShow ("can't be used to capture by index") mas funcionam por Media
@@ -156,19 +155,13 @@ class Pipeline:
             return
 
         try:
-            with pyvirtualcam.Camera(
-                width=cfg.width,
-                height=cfg.height,
-                fps=cfg.fps,
-                fmt=PixelFormat.BGR,
-            ) as cam:
+            with CamFXVirtualCamera(fps=cfg.fps) as cam:
                 self._status(f"Camera virtual ativa: {cam.device}")
                 self._run_frames(cap, cam)
         except RuntimeError as exc:
-            # Tipicamente: OBS Virtual Camera nao instalado.
             self._error(
-                "Camera virtual indisponivel. Instale o OBS Studio uma vez "
-                f"(ele registra o driver da camera virtual). Detalhe: {exc}"
+                "Camera virtual indisponivel. O driver CamFX pode nao estar "
+                f"registrado. Reinstale o CamFX. Detalhe: {exc}"
             )
         finally:
             cap.release()

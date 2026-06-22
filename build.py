@@ -31,6 +31,14 @@ def main() -> int:
         f"{models_dir() / 'blaze_face_short_range.tflite'}{sep}models",
     ]
 
+    # Driver da camera virtual: embutido na raiz do bundle, registrado pelo app.
+    driver_dll = Path("driver") / "CamFXSource.dll"
+    if not driver_dll.exists():
+        print("AVISO: driver/CamFXSource.dll nao encontrado. "
+              "Rode driver/build_baseclasses.bat e driver/build_driver.bat antes.")
+    else:
+        add_data.append(f"{driver_dll}{sep}.")
+
     cmd = [
         sys.executable, "-m", "PyInstaller",
         "--noconfirm",

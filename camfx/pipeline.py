@@ -138,6 +138,7 @@ class _ThreadedReader:
     def __init__(self, cap):
         self._cap = cap
         self._latest = None
+        self._seq = 0          # incrementa a cada frame NOVO capturado
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._thread = None
@@ -155,6 +156,7 @@ class _ThreadedReader:
                 fails = 0
                 with self._lock:
                     self._latest = frame
+                    self._seq += 1
             else:
                 fails += 1
                 if fails >= 60:
@@ -164,7 +166,7 @@ class _ThreadedReader:
 
     def latest(self):
         with self._lock:
-            return self._latest
+            return self._latest, self._seq
 
     def stop(self):
         self._stop.set()
@@ -332,10 +334,11 @@ class Pipeline:
         # sem esperar o read, desacoplando o FPS de saida da latencia do read.
         reader = _ThreadedReader(cap)
         reader.start()
+        last_seq = -1
 
         try:
             while self.running:
-                frame = reader.latest()
+                frame, seq = reader.latest()
                 if frame is None:
                     miss += 1
                     if miss >= 200 or not reader.alive:
@@ -346,6 +349,12 @@ class Pipeline:
                         break
                     time.sleep(0.005)
                     continue
+                # Se nao chegou frame novo, nao reprocessa (economiza CPU e nao
+                # introduz atraso reenviando frame velho); espera um pouco.
+                if seq == last_seq:
+                    time.sleep(0.002)
+                    continue
+                last_seq = seq
                 miss = 0
 
                 if frame.shape[1] != cfg.width or frame.shape[0] != cfg.height:
@@ -376,7 +385,9 @@ class Pipeline:
 
                 cam.send(frame)
                 last_good = frame
-                cam.sleep_until_next_frame()
+                # Sem sleep: o ritmo ja e ditado pela chegada de frames novos da
+                # camera (so processamos quando seq muda). Dormir aqui so somaria
+                # latencia ("arrastado").
 
                 frame_count += 1
                 if frame_count == 30:  # loga uma vez, ~1s apos comecar

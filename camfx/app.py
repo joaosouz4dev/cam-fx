@@ -239,6 +239,7 @@ class CamFXApp:
 
         try:
             self._demand_monitor = DemandMonitor()
+            log("monitor de demanda iniciado")
         except Exception as exc:
             log(f"monitor FALHOU: {exc!r}")
             return
@@ -248,12 +249,17 @@ class CamFXApp:
         def loop():
             mon = self._demand_monitor
             empty_since = None
+            last_state = None
             OFF_DELAY = 5.0  # espera antes de desligar (evita liga/desliga rapido)
             while not self._demand_stop.is_set():
                 try:
                     consumers = mon.consumer_count()
-                except Exception:
+                except Exception as exc:
+                    log(f"consumer_count erro: {exc!r}")
                     consumers = 0
+                if consumers != last_state:
+                    log(f"demanda: consumers={consumers} pipeline_running={self.pipeline.running}")
+                    last_state = consumers
                 if consumers > 0:
                     empty_since = None
                     if not self.pipeline.running:

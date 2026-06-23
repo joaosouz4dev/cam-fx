@@ -37,22 +37,29 @@ class BackgroundBlur:
         edge_softness: int = 7,
     ) -> np.ndarray:
         """Retorna o frame com o fundo desfocado."""
-        rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+        h, w = frame_bgr.shape[:2]
 
+        # Segmenta numa imagem reduzida (~360p de largura): a mascara de pessoa
+        # nao precisa da resolucao cheia, e a inferencia fica varias vezes mais
+        # rapida. Em 720p isso e o que mais derruba o tempo de processamento.
+        seg_w = 480
+        seg_scale = seg_w / w if w > seg_w else 1.0
+        if seg_scale < 1.0:
+            seg_in = cv2.resize(frame_bgr, (seg_w, int(h * seg_scale)),
+                                interpolation=cv2.INTER_LINEAR)
+        else:
+            seg_in = frame_bgr
+
+        rgb = cv2.cvtColor(seg_in, cv2.COLOR_BGR2RGB)
+        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
         result = self._segmenter.segment_for_video(mp_image, timestamp_ms)
-        # confidence_masks[0] = confianca de ser foreground (pessoa).
         confidence = result.confidence_masks[0].numpy_view()
 
-        mask = self._refine_mask(
-            confidence, frame_bgr.shape[:2], mask_threshold, edge_softness
-        )
+        # Refina a mascara ja no tamanho final (resize da mascara, barato).
+        mask = self._refine_mask(confidence, (h, w), mask_threshold, edge_softness)
         self._last_mask = mask
 
-        # Blur rapido: reduz a imagem, borra pequeno e amplia de volta. Borrar
-        # numa imagem 1/3 do tamanho e ~9x mais barato que um GaussianBlur
-        # grande na resolucao cheia, com resultado visualmente equivalente.
-        h, w = frame_bgr.shape[:2]
+        # Blur do fundo numa imagem reduzida (rapido), ampliado de volta.
         scale = 0.35
         small = cv2.resize(frame_bgr, (max(1, int(w * scale)), max(1, int(h * scale))),
                            interpolation=cv2.INTER_LINEAR)
@@ -60,15 +67,13 @@ class BackgroundBlur:
         small = cv2.GaussianBlur(small, (k, k), 0)
         blurred = cv2.resize(small, (w, h), interpolation=cv2.INTER_LINEAR)
 
-        # Composicao alpha eficiente: out = blurred + mask*(frame - blurred).
-        # float32 (nao float64) com operacoes in-place: ~3x mais rapido que a
-        # expressao frame*a + blurred*(1-a).
+        # Composicao alpha: out = blurred + mask*(frame - blurred), float32 in-place.
         alpha = mask[:, :, np.newaxis].astype(np.float32, copy=False)
         fg = frame_bgr.astype(np.float32)
         bg = blurred.astype(np.float32)
-        fg -= bg          # frame - blurred
-        fg *= alpha       # mask*(frame - blurred)
-        fg += bg          # blurred + mask*(frame - blurred)
+        fg -= bg
+        fg *= alpha
+        fg += bg
         return fg.astype(np.uint8)
 
     def _refine_mask(

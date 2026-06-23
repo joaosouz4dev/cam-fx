@@ -127,6 +127,51 @@ def _probe_cameras(max_index: int = 8) -> list[tuple[int, str]]:
     return found
 
 
+class _ThreadedReader:
+    """Le frames da camera numa thread dedicada.
+
+    O cap.read() do MSMF e lento (~50ms). Lendo continuamente em background, o
+    pipeline sempre pega o frame mais recente sem bloquear, desacoplando o FPS
+    de saida da latencia do read.
+    """
+
+    def __init__(self, cap):
+        self._cap = cap
+        self._latest = None
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._thread = None
+        self.alive = True
+
+    def start(self):
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+        self._thread.start()
+
+    def _loop(self):
+        fails = 0
+        while not self._stop.is_set():
+            ok, frame = self._cap.read()
+            if ok and frame is not None:
+                fails = 0
+                with self._lock:
+                    self._latest = frame
+            else:
+                fails += 1
+                if fails >= 60:
+                    self.alive = False
+                    break
+                time.sleep(0.01)
+
+    def latest(self):
+        with self._lock:
+            return self._latest
+
+    def stop(self):
+        self._stop.set()
+        if self._thread:
+            self._thread.join(timeout=2)
+
+
 class Pipeline:
     def __init__(self, config: Config) -> None:
         self.config = config
@@ -280,61 +325,66 @@ class Pipeline:
         miss = 0
         last_good = None
 
-        while self.running:
-            ok, frame = cap.read()
-            if not ok or frame is None:
-                # Tolera quedas momentaneas: o MSMF as vezes solta um frame
-                # vazio sem a camera ter caido. So desiste apos varias falhas.
-                miss += 1
-                if miss >= 60:  # ~2s de falhas seguidas a 30fps
-                    self._error(
-                        "Perdi o sinal da camera. Verifique se ela nao foi "
-                        "desconectada ou tomada por outro programa."
-                    )
+        # Thread de captura: o cap.read() do MSMF e lento (~50ms/frame). Lendo
+        # numa thread dedicada, o processamento usa sempre o frame mais recente
+        # sem esperar o read, desacoplando o FPS de saida da latencia do read.
+        reader = _ThreadedReader(cap)
+        reader.start()
+
+        try:
+            while self.running:
+                frame = reader.latest()
+                if frame is None:
+                    miss += 1
+                    if miss >= 200 or not reader.alive:
+                        self._error(
+                            "Perdi o sinal da camera. Verifique se ela nao foi "
+                            "desconectada ou tomada por outro programa."
+                        )
+                        break
+                    time.sleep(0.005)
+                    continue
+                miss = 0
+
+                if frame.shape[1] != cfg.width or frame.shape[0] != cfg.height:
+                    frame = cv2.resize(frame, (cfg.width, cfg.height))
+
+                ts_ms = int((time.perf_counter() - start) * 1000)
+
+                try:
+                    with self._lock:
+                        if cfg.framing_enabled and self._framing:
+                            frame = self._framing.process(
+                                frame, ts_ms,
+                                zoom=cfg.framing_zoom,
+                                smoothing=cfg.framing_smoothing,
+                            )
+                        if cfg.blur_enabled and self._blur:
+                            frame = self._blur.process(
+                                frame, ts_ms + 1,
+                                blur_strength=cfg.blur_strength,
+                                mask_threshold=cfg.mask_threshold,
+                                edge_softness=cfg.edge_softness,
+                            )
+                except Exception as exc:
+                    from .log import log as _log
+                    _log(f"Erro no processamento: {exc!r}")
+                    self._error(f"Erro no processamento: {exc}")
                     break
-                if last_good is not None:
-                    cam.send(last_good)  # mantem a saida viva com o ultimo frame
-                time.sleep(0.01)
-                continue
-            miss = 0
 
-            if frame.shape[1] != cfg.width or frame.shape[0] != cfg.height:
-                frame = cv2.resize(frame, (cfg.width, cfg.height))
+                cam.send(frame)
+                last_good = frame
+                cam.sleep_until_next_frame()
 
-            ts_ms = int((time.perf_counter() - start) * 1000)
-
-            try:
-                with self._lock:
-                    if cfg.framing_enabled and self._framing:
-                        frame = self._framing.process(
-                            frame, ts_ms,
-                            zoom=cfg.framing_zoom,
-                            smoothing=cfg.framing_smoothing,
-                        )
-                    if cfg.blur_enabled and self._blur:
-                        frame = self._blur.process(
-                            frame, ts_ms + 1,
-                            blur_strength=cfg.blur_strength,
-                            mask_threshold=cfg.mask_threshold,
-                            edge_softness=cfg.edge_softness,
-                        )
-            except Exception as exc:
-                from .log import log as _log
-                _log(f"Erro no processamento: {exc!r}")
-                self._error(f"Erro no processamento: {exc}")
-                break
-
-            cam.send(frame)
-            last_good = frame
-            cam.sleep_until_next_frame()
-
-            frame_count += 1
-            if frame_count == 30:  # loga uma vez, ~1s apos comecar
-                from .log import log as _log
-                _log(f"processando: blur={cfg.blur_enabled and self._blur is not None} "
-                     f"framing={cfg.framing_enabled and self._framing is not None}")
-            now = time.perf_counter()
-            if now - last_fps_calc >= 1.0:
-                self._fps_actual = frame_count / (now - last_fps_calc)
-                frame_count = 0
-                last_fps_calc = now
+                frame_count += 1
+                if frame_count == 30:  # loga uma vez, ~1s apos comecar
+                    from .log import log as _log
+                    _log(f"processando: blur={cfg.blur_enabled and self._blur is not None} "
+                         f"framing={cfg.framing_enabled and self._framing is not None}")
+                now = time.perf_counter()
+                if now - last_fps_calc >= 1.0:
+                    self._fps_actual = frame_count / (now - last_fps_calc)
+                    frame_count = 0
+                    last_fps_calc = now
+        finally:
+            reader.stop()

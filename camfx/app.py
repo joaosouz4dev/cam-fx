@@ -95,7 +95,10 @@ class CamFXApp:
         header = ttk.Frame(left)
         header.pack(fill="x")
         ttk.Label(header, text="Pre-visualizacao", style="Title.TLabel").pack(side="left")
-        self._preview_var = tk.BooleanVar(value=True)
+        # Preview desligado por padrao: ele le o arquivo e redesenha a cada
+        # ~100ms, consumindo CPU que faz falta ao pipeline. O usuario liga so
+        # quando quer conferir o resultado.
+        self._preview_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(header, text="Mostrar", variable=self._preview_var,
                         command=self._on_toggle_preview, style="TCheckbutton").pack(side="right")
 

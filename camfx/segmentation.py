@@ -55,26 +55,34 @@ class BackgroundBlur:
         result = self._segmenter.segment_for_video(mp_image, timestamp_ms)
         confidence = result.confidence_masks[0].numpy_view()
 
-        # Refina a mascara ja no tamanho final (resize da mascara, barato).
-        mask = self._refine_mask(confidence, (h, w), mask_threshold, edge_softness)
+        # A composicao (mistura pessoa nitida + fundo borrado) em 720p full-res
+        # custa ~17-30ms na CPU - o maior gargalo. Fazemos a composicao numa
+        # escala reduzida (COMPOSE_SCALE) e ampliamos: ~3x mais rapido. A pessoa
+        # perde um pouco de nitidez, mas o ganho de FPS compensa. (Quando houver
+        # GPU/OpenCV-CUDA, este e o ponto a acelerar sem reduzir escala.)
+        cs = 0.5
+        cw, ch = max(1, int(w * cs)), max(1, int(h * cs))
+        frame_s = cv2.resize(frame_bgr, (cw, ch), interpolation=cv2.INTER_AREA)
+
+        # Mascara na escala da composicao.
+        mask = self._refine_mask(confidence, (ch, cw), mask_threshold, edge_softness)
         self._last_mask = mask
 
-        # Blur do fundo numa imagem reduzida (rapido), ampliado de volta.
-        scale = 0.35
-        small = cv2.resize(frame_bgr, (max(1, int(w * scale)), max(1, int(h * scale))),
-                           interpolation=cv2.INTER_LINEAR)
-        k = self._odd(max(3, int(blur_strength * scale)))
-        small = cv2.GaussianBlur(small, (k, k), 0)
-        blurred = cv2.resize(small, (w, h), interpolation=cv2.INTER_LINEAR)
+        # Fundo borrado na escala da composicao.
+        k = self._odd(max(3, int(blur_strength * cs)))
+        blurred_s = cv2.GaussianBlur(frame_s, (k, k), 0)
 
-        # Composicao alpha: out = blurred + mask*(frame - blurred), float32 in-place.
+        # Composicao alpha em escala reduzida (float32 in-place).
         alpha = mask[:, :, np.newaxis].astype(np.float32, copy=False)
-        fg = frame_bgr.astype(np.float32)
-        bg = blurred.astype(np.float32)
+        fg = frame_s.astype(np.float32)
+        bg = blurred_s.astype(np.float32)
         fg -= bg
         fg *= alpha
         fg += bg
-        return fg.astype(np.uint8)
+        out_s = fg.astype(np.uint8)
+
+        # Amplia o resultado de volta a resolucao cheia.
+        return cv2.resize(out_s, (w, h), interpolation=cv2.INTER_LINEAR)
 
     def _refine_mask(
         self,

@@ -66,7 +66,6 @@ class CamFXApp:
 
         self.tray = TrayIcon(
             on_show=self.show_window,
-            on_toggle=self.show_window,  # clique na bandeja so abre a janela
             on_quit=self.quit,
             is_running=lambda: self.pipeline.running,
         )

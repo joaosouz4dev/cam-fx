@@ -23,9 +23,8 @@ def _make_icon_image() -> Image.Image:
 
 
 class TrayIcon:
-    def __init__(self, on_show, on_toggle, on_quit, is_running):
+    def __init__(self, on_show, on_quit, is_running):
         self._on_show = on_show
-        self._on_toggle = on_toggle
         self._on_quit = on_quit
         self._is_running = is_running
         self._icon = pystray.Icon(
@@ -33,21 +32,20 @@ class TrayIcon:
             _make_icon_image(),
             "CamFX",
             menu=pystray.Menu(
-                pystray.MenuItem("Abrir CamFX", self._show, default=True),
+                # Status (apenas informativo): reflete se a camera esta em uso.
                 pystray.MenuItem(
-                    lambda _: "Pausar efeitos" if self._is_running() else "Ligar camera",
-                    self._toggle,
+                    lambda _: ("●  Camera em uso" if self._is_running()
+                               else "○  Em espera"),
+                    None, enabled=False,
                 ),
                 pystray.Menu.SEPARATOR,
+                pystray.MenuItem("Abrir janela", self._show, default=True),
                 pystray.MenuItem("Sair", self._quit),
             ),
         )
 
     def _show(self, *_):
         self._on_show()
-
-    def _toggle(self, *_):
-        self._on_toggle()
 
     def _quit(self, *_):
         self._icon.stop()

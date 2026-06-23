@@ -9,7 +9,11 @@
 ;   dist\camfx_vcam.exe                (host da camera virtual)
 
 #define AppName "CamFX"
-#define AppVersion "1.0.0"
+; Versao pode vir do CI via: ISCC /DMyAppVersion=0.0.1 ...
+#ifndef MyAppVersion
+  #define MyAppVersion "0.0.0"
+#endif
+#define AppVersion MyAppVersion
 #define AppPublisher "Joao Victor Souza"
 #define AppExe "CamFX.exe"
 

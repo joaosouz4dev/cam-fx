@@ -1,0 +1,106 @@
+name: Release
+
+# A cada push na main: auto-incrementa a versao (patch), compila a camera
+# virtual + app + instalador, cria a tag e publica o release com o
+# CamFX-Setup.exe. Comeca em 0.0.1 se nao houver tag.
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:              # mudancas so de docs nao geram release
+      - "**.md"
+      - "src/**"               # post do blog do site (outro projeto)
+      - ".gitignore"
+  workflow_dispatch: {}        # permite rodar manualmente tambem
+
+permissions:
+  contents: write              # criar tags e releases
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0       # precisa do historico p/ ler as tags
+
+      - name: Calcular proxima versao
+        id: ver
+        shell: pwsh
+        run: |
+          git fetch --tags --force
+          $last = git tag --list "v*" --sort=-v:refname | Select-Object -First 1
+          if (-not $last) {
+            $next = "0.0.1"
+          } else {
+            $p = $last.TrimStart("v").Split(".")
+            $next = "$($p[0]).$($p[1]).$([int]$p[2] + 1)"
+          }
+          "version=$next" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "tag=v$next"    | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          Write-Host "Proxima versao: $next (anterior: $last)"
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias Python
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Montar a camera virtual (mfref)
+        shell: pwsh
+        run: ./setup_driver.ps1
+
+      - name: Compilar a camera virtual (DLL + helper)
+        shell: pwsh
+        run: ./build_driver.ps1
+
+      - name: Gerar o executavel (PyInstaller)
+        shell: pwsh
+        run: python build.py
+
+      - name: Instalar Inno Setup
+        shell: pwsh
+        run: choco install innosetup --no-progress -y
+
+      - name: Gerar o instalador
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          & $iscc "/DMyAppVersion=${{ steps.ver.outputs.version }}" installer\camfx.iss
+          if (-not (Test-Path "installer\output\CamFX-Setup.exe")) { throw "Instalador nao gerado." }
+
+      - name: Criar tag
+        shell: pwsh
+        run: |
+          git tag ${{ steps.ver.outputs.tag }}
+          git push origin ${{ steps.ver.outputs.tag }}
+
+      - name: Publicar release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: CamFX ${{ steps.ver.outputs.version }}
+          files: installer/output/CamFX-Setup.exe
+          body: |
+            ## CamFX ${{ steps.ver.outputs.version }} — Câmera virtual com blur de fundo para Windows 11
+
+            ⬇️ Baixe o **CamFX-Setup.exe** abaixo e execute (Windows 11 22H2+).
+
+            ### Instalação
+            1. Execute o `CamFX-Setup.exe` (pede permissão de administrador).
+            2. Abra o CamFX e selecione a câmera **CamFX** no seu app de vídeo.
+
+            ### Aviso do Windows SmartScreen
+            O instalador não é assinado digitalmente. Se aparecer "O Windows protegeu o seu PC":
+            **Mais informações → Executar assim mesmo**. O código-fonte é aberto e auditável.

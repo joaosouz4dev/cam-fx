@@ -9,6 +9,8 @@ numpy==1.26.4
 # A camera virtual usa o driver proprio CamFX (driver/CamFXSource.dll),
 # alimentado por memoria compartilhada em camfx/virtualcam.py. Sem dependencia
 # externa de runtime para isso.
+# Interface (janela WebView2 com HTML/CSS/JS)
+pywebview==6.2.1
 # Bandeja do sistema (icone, menu, iniciar minimizado)
 pystray==0.19.5
 Pillow==10.4.0

@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CamFX</title>
+<style>
+  :root{
+    --bg:#0e1013; --panel:#15181d; --card:#1b1f26; --card2:#20242c;
+    --line:#262b33; --text:#e8eaed; --dim:#8b919b; --accent:#f5b417;
+    --accent2:#f7c948; --radius:16px;
+  }
+  *{box-sizing:border-box; margin:0; padding:0}
+  html,body{height:100%}
+  body{
+    background:var(--bg); color:var(--text); overflow:hidden;
+    font-family:"Segoe UI Variable","Segoe UI",system-ui,sans-serif;
+    -webkit-user-select:none; user-select:none;
+  }
+  .app{display:flex; height:100vh; gap:18px; padding:18px}
+
+  /* ---- coluna esquerda: preview ---- */
+  .left{flex:1; display:flex; flex-direction:column; gap:14px; min-width:0}
+  .header{display:flex; align-items:center; justify-content:space-between}
+  .brand{display:flex; align-items:center; gap:10px}
+  .brand img{width:30px; height:30px}
+  .brand h1{font-size:20px; font-weight:600; letter-spacing:.2px}
+  .ttl{font-size:18px; font-weight:600}
+
+  .preview-wrap{
+    flex:1; background:#000; border:1px solid var(--line);
+    border-radius:var(--radius); position:relative; overflow:hidden;
+    display:flex; align-items:center; justify-content:center;
+  }
+  #preview{width:100%; height:100%; object-fit:cover; display:none}
+  .placeholder{position:absolute; inset:0; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; gap:14px; color:var(--dim)}
+  .ph-frame{position:absolute; inset:26px; border-radius:12px;
+    background:
+      linear-gradient(var(--accent),var(--accent)) left top,
+      linear-gradient(var(--accent),var(--accent)) left top,
+      linear-gradient(var(--accent),var(--accent)) right top,
+      linear-gradient(var(--accent),var(--accent)) right top,
+      linear-gradient(var(--accent),var(--accent)) left bottom,
+      linear-gradient(var(--accent),var(--accent)) left bottom,
+      linear-gradient(var(--accent),var(--accent)) right bottom,
+      linear-gradient(var(--accent),var(--accent)) right bottom;
+    background-repeat:no-repeat; background-size:22px 3px,3px 22px;
+    opacity:.7; pointer-events:none}
+  .ph-icon{width:96px; height:96px; border-radius:50%;
+    background:rgba(255,255,255,.06); display:flex; align-items:center;
+    justify-content:center}
+  .ph-icon svg{width:42px; height:42px; fill:#cfd3d9; opacity:.8}
+  .ph-txt{font-size:17px; color:#c4c8cf}
+  .ph-sub{font-size:13px; color:var(--dim); margin-top:-8px}
+
+  .status{
+    display:flex; gap:12px; align-items:center; background:var(--panel);
+    border:1px solid var(--line); border-radius:14px; padding:14px 16px;
+  }
+  .status .dot{width:34px; height:34px; border-radius:50%; flex:none;
+    display:flex; align-items:center; justify-content:center;
+    border:2px solid var(--accent); color:var(--accent); font-weight:700}
+  .status .s-main{font-size:14px; font-weight:600}
+  .status .s-sub{font-size:12px; color:var(--dim)}
+
+  /* ---- coluna direita: controles ---- */
+  .right{width:330px; display:flex; flex-direction:column; gap:14px}
+  .card{background:var(--panel); border:1px solid var(--line);
+    border-radius:var(--radius); padding:16px}
+  .card .c-head{display:flex; align-items:center; gap:10px; margin-bottom:14px}
+  .card .c-head svg{width:18px; height:18px; fill:var(--accent)}
+  .card .c-head span{font-size:15px; font-weight:600}
+
+  select{
+    width:100%; background:var(--card2); color:var(--text);
+    border:1px solid var(--line); border-radius:12px; padding:12px 14px;
+    font-size:14px; appearance:none; cursor:pointer;
+    background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='%238b919b' viewBox='0 0 16 16'><path d='M4 6l4 4 4-4'/></svg>");
+    background-repeat:no-repeat; background-position:right 14px center;
+  }
+
+  .row{display:flex; align-items:center; justify-content:space-between; gap:12px}
+  .row .label{display:flex; align-items:center; gap:10px; font-size:14px}
+  .row .label svg{width:18px; height:18px; fill:var(--dim)}
+
+  /* toggle pill */
+  .toggle{width:46px; height:26px; border-radius:13px; background:var(--card2);
+    border:1px solid var(--line); position:relative; cursor:pointer;
+    transition:background .15s; flex:none}
+  .toggle::after{content:""; position:absolute; top:2px; left:2px; width:20px;
+    height:20px; border-radius:50%; background:#6b7280; transition:.15s}
+  .toggle.on{background:var(--accent)}
+  .toggle.on::after{left:22px; background:#1a1d22}
+
+  .sub{margin-top:14px}
+  .sub .sl-head{display:flex; justify-content:space-between; font-size:13px;
+    color:var(--dim); margin-bottom:8px}
+  .sub .sl-head .val{color:var(--text); font-weight:600}
+  input[type=range]{width:100%; -webkit-appearance:none; height:6px;
+    border-radius:3px; background:var(--card2); outline:none}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none; width:18px;
+    height:18px; border-radius:50%; background:var(--accent); cursor:pointer;
+    border:3px solid #1a1d22; box-shadow:0 0 0 1px var(--accent)}
+  .disabled{opacity:.45; pointer-events:none}
+
+  .spacer{flex:1}
+  .btn-primary{width:100%; background:var(--accent); color:#1a1d22;
+    border:none; border-radius:14px; padding:15px; font-size:15px;
+    font-weight:700; cursor:pointer; display:flex; align-items:center;
+    justify-content:center; gap:10px}
+  .btn-primary:hover{background:var(--accent2)}
+  .btn-primary svg{width:18px; height:18px; fill:#1a1d22}
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- ESQUERDA -->
+  <div class="left">
+    <div class="header">
+      <div class="brand">
+        <img id="logo" alt="">
+        <h1>CamFX</h1>
+      </div>
+    </div>
+
+    <div class="row" style="margin-top:-4px">
+      <div class="ttl">Pré-visualização</div>
+      <div class="row" style="gap:10px">
+        <span style="font-size:13px;color:var(--dim)">Mostrar</span>
+        <div id="tg-preview" class="toggle" onclick="togglePreview()"></div>
+      </div>
+    </div>
+
+    <div class="preview-wrap">
+      <img id="preview" alt="">
+      <div class="placeholder" id="placeholder">
+        <div class="ph-frame"></div>
+        <div class="ph-icon">
+          <svg viewBox="0 0 24 24"><path d="M17 10.5V7a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-3.5l4 4v-11l-4 4z"/></svg>
+        </div>
+        <div class="ph-txt">Pré-visualização da câmera</div>
+        <div class="ph-sub">Sua imagem aparecerá aqui</div>
+      </div>
+    </div>
+
+    <div class="status">
+      <div class="dot">i</div>
+      <div>
+        <div class="s-main" id="status-main">Selecione "CamFX" no seu app de vídeo.</div>
+        <div class="s-sub">A câmera liga sozinha quando você seleciona "CamFX" no seu app de vídeo.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- DIREITA -->
+  <div class="right">
+    <div class="card">
+      <div class="c-head">
+        <svg viewBox="0 0 24 24"><path d="M17 10.5V7a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-3.5l4 4v-11l-4 4z"/></svg>
+        <span>Câmera de entrada</span>
+      </div>
+      <select id="camera" onchange="onCamera()"></select>
+    </div>
+
+    <div class="card">
+      <div class="c-head">
+        <svg viewBox="0 0 24 24"><path d="M12 2l1.6 4.6L18 8l-4.4 1.4L12 14l-1.6-4.6L6 8l4.4-1.4L12 2z"/></svg>
+        <span>Efeitos</span>
+      </div>
+
+      <div class="row">
+        <div class="label">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r="9" fill="none" stroke="%238b919b"/></svg>
+          Desfocar o fundo
+        </div>
+        <div id="tg-blur" class="toggle" onclick="toggleBlur()"></div>
+      </div>
+      <div class="sub" id="blur-sub">
+        <div class="sl-head"><span>Intensidade</span><span class="val" id="blur-val">60%</span></div>
+        <input type="range" id="blur" min="3" max="75" oninput="onBlur(this.value)">
+      </div>
+
+      <div class="row" style="margin-top:18px">
+        <div class="label">
+          <svg viewBox="0 0 24 24"><path d="M4 8V4h4M16 4h4v4M20 16v4h-4M8 20H4v-4"/></svg>
+          Auto-framing (segue o rosto)
+        </div>
+        <div id="tg-framing" class="toggle" onclick="toggleFraming()"></div>
+      </div>
+      <div class="sub" id="framing-sub">
+        <div class="sl-head"><span>Zoom</span><span class="val" id="zoom-val">70%</span></div>
+        <input type="range" id="zoom" min="10" max="25" oninput="onZoom(this.value)">
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="c-head">
+        <svg viewBox="0 0 24 24"><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zm9 4l-2 .5.8 1.9-1.4 1.4-1.9-.8L15 18l-.5 2h-2L12 18l-1.9.8-1.4-1.4.8-1.9L7.5 15 5.5 14.5 5 12.5 7 12l-.8-1.9 1.4-1.4 1.9.8L11 7l.5-2h2L14 7l1.9-.8 1.4 1.4-.8 1.9 1.9.5z"/></svg>
+        <span>Processamento</span>
+      </div>
+      <select id="device" onchange="onDevice()"></select>
+    </div>
+
+    <div class="card">
+      <div class="row">
+        <div class="label">
+          <svg viewBox="0 0 24 24"><path d="M3 5l8-1v7H3V5zm0 8h8v7l-8-1v-6zm9-9l9-1v9h-9V4zm0 9h9v9l-9-1v-8z"/></svg>
+          Iniciar com o Windows
+        </div>
+        <div id="tg-autostart" class="toggle" onclick="toggleAutostart()"></div>
+      </div>
+    </div>
+
+    <div class="spacer"></div>
+    <button class="btn-primary" onclick="minimize()">
+      <svg viewBox="0 0 24 24"><path d="M4 18h16v2H4zM4 6h16v10H4z" fill="none" stroke="%231a1d22" stroke-width="2"/></svg>
+      Minimizar para a bandeja
+    </button>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

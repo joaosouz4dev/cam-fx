@@ -12,7 +12,23 @@ import os
 
 os.environ.setdefault("OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS", "0")
 
-from camfx.app import main
+import sys
+
+from camfx.single_instance import SingleInstance
+
+
+def main():
+    # Instancia unica: se ja ha um CamFX aberto, traz a janela existente.
+    instance = SingleInstance()
+    if not instance.acquire():
+        instance.signal_existing()
+        return
+
+    start_minimized = "--minimized" in sys.argv
+    from camfx import webui
+    # listen() sera ligado dentro do run apos a janela existir.
+    webui.run(start_minimized=start_minimized, instance=instance)
+
 
 if __name__ == "__main__":
     main()

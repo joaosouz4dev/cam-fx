@@ -32,6 +32,8 @@ def main() -> int:
         # logo/icone -> pasta "assets" dentro do bundle
         f"{Path('assets') / 'logo.png'}{sep}assets",
         f"{Path('assets') / 'icon.ico'}{sep}assets",
+        # UI WebView2 (HTML/CSS/JS) -> pasta "ui" dentro do bundle
+        f"{Path('camfx') / 'ui'}{sep}ui",
     ]
 
     cmd = [
@@ -50,6 +52,8 @@ def main() -> int:
         # (captura DirectShow rapida) funcionar dentro do .exe.
         "--collect-all", "comtypes",
         "--collect-submodules", "pygrabber",
+        # pywebview (UI WebView2) - traz os backends e dados.
+        "--collect-all", "webview",
     ]
     for entry in add_data:
         cmd += ["--add-data", entry]

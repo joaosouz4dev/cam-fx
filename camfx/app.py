@@ -231,6 +231,14 @@ class CamFXApp:
     # ---------- modo sob demanda (auto total) ----------
 
     def _start_demand_monitor(self):
+        try:
+            self._start_demand_monitor_impl()
+        except Exception as exc:
+            import traceback
+            log(f"_start_demand_monitor FALHOU: {exc!r}\n{traceback.format_exc()}")
+
+    def _start_demand_monitor_impl(self):
+        log("iniciando monitor de demanda...")
         self._vcam_host = VCamHost()
         if self._vcam_host.start():
             log("vcam host MF iniciado")
@@ -247,6 +255,7 @@ class CamFXApp:
         self._demand_stop = threading.Event()
 
         def loop():
+          try:
             mon = self._demand_monitor
             empty_since = None
             last_state = None
@@ -271,6 +280,9 @@ class CamFXApp:
                         threading.Thread(target=self.pipeline.stop, daemon=True).start()
                         empty_since = None
                 self._demand_stop.wait(1.0)
+          except Exception as exc:
+            import traceback
+            log(f"loop demanda FALHOU: {exc!r}\n{traceback.format_exc()}")
 
         self._demand_thread = threading.Thread(target=loop, daemon=True)
         self._demand_thread.start()

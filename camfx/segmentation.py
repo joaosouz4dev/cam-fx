@@ -1,36 +1,67 @@
-"""Blur de fundo via MediaPipe Image Segmenter (selfie segmentation).
+"""Blur de fundo via ONNX Runtime (selfie segmentation).
 
-Recebe um frame BGR (OpenCV), produz uma mascara de "pessoa" e compoe a pessoa
-nitida sobre uma versao desfocada do mesmo frame.
+A segmentacao roda na GPU (DirectML) quando disponivel, com fallback para CPU.
+O modelo (256x256) devolve uma mascara de pessoa; compomos a pessoa nitida
+sobre uma versao desfocada do mesmo frame. A composicao e feita em escala
+reduzida (o gargalo em 720p na CPU) e ampliada de volta.
 """
 
 from __future__ import annotations
 
 import cv2
 import numpy as np
-import mediapipe as mp
-from mediapipe.tasks import python as mp_python
-from mediapipe.tasks.python import vision
 
 from .models import bundled_or_cached
 
+_INPUT = 256  # o modelo opera em 256x256
+
+
+def available_devices() -> list[str]:
+    """Lista os devices que conseguimos usar: ['gpu','cpu'] ou ['cpu']."""
+    try:
+        import onnxruntime as ort
+
+        provs = ort.get_available_providers()
+        out = []
+        if "DmlExecutionProvider" in provs or "CUDAExecutionProvider" in provs:
+            out.append("gpu")
+        out.append("cpu")
+        return out
+    except Exception:
+        return ["cpu"]
+
+
+def _providers_for(device: str):
+    """Mapeia a preferencia (auto|gpu|cpu) para a lista de providers do ORT."""
+    import onnxruntime as ort
+
+    avail = ort.get_available_providers()
+    gpu = [p for p in ("DmlExecutionProvider", "CUDAExecutionProvider") if p in avail]
+    if device == "cpu":
+        return ["CPUExecutionProvider"]
+    if device == "gpu":
+        return gpu + ["CPUExecutionProvider"]
+    # auto: GPU se houver, senao CPU
+    return gpu + ["CPUExecutionProvider"]
+
 
 class BackgroundBlur:
-    def __init__(self) -> None:
-        model_path = str(bundled_or_cached("selfie_segmenter.tflite"))
-        options = vision.ImageSegmenterOptions(
-            base_options=mp_python.BaseOptions(model_asset_path=model_path),
-            running_mode=vision.RunningMode.VIDEO,
-            output_category_mask=False,
-            output_confidence_masks=True,
-        )
-        self._segmenter = vision.ImageSegmenter.create_from_options(options)
+    def __init__(self, device: str = "auto") -> None:
+        import onnxruntime as ort
+
+        model_path = str(bundled_or_cached("selfie_segmentation.onnx"))
+        opts = ort.SessionOptions()
+        opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+        self._sess = ort.InferenceSession(
+            model_path, sess_options=opts, providers=_providers_for(device))
+        self._input_name = self._sess.get_inputs()[0].name
+        self.active_provider = self._sess.get_providers()[0]
         self._last_mask: np.ndarray | None = None
 
     def process(
         self,
         frame_bgr: np.ndarray,
-        timestamp_ms: int,
+        timestamp_ms: int = 0,
         *,
         blur_strength: int = 25,
         mask_threshold: float = 0.5,
@@ -39,40 +70,23 @@ class BackgroundBlur:
         """Retorna o frame com o fundo desfocado."""
         h, w = frame_bgr.shape[:2]
 
-        # Segmenta numa imagem reduzida (~360p de largura): a mascara de pessoa
-        # nao precisa da resolucao cheia, e a inferencia fica varias vezes mais
-        # rapida. Em 720p isso e o que mais derruba o tempo de processamento.
-        seg_w = 480
-        seg_scale = seg_w / w if w > seg_w else 1.0
-        if seg_scale < 1.0:
-            seg_in = cv2.resize(frame_bgr, (seg_w, int(h * seg_scale)),
-                                interpolation=cv2.INTER_LINEAR)
-        else:
-            seg_in = frame_bgr
+        # Inferencia: 256x256 RGB normalizado, NCHW.
+        inp = cv2.resize(frame_bgr, (_INPUT, _INPUT), interpolation=cv2.INTER_LINEAR)
+        inp = cv2.cvtColor(inp, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+        inp = np.transpose(inp, (2, 0, 1))[np.newaxis]
+        conf = self._sess.run(None, {self._input_name: inp})[0][0, 0]  # 256x256, 0..1
 
-        rgb = cv2.cvtColor(seg_in, cv2.COLOR_BGR2RGB)
-        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
-        result = self._segmenter.segment_for_video(mp_image, timestamp_ms)
-        confidence = result.confidence_masks[0].numpy_view()
-
-        # A composicao (mistura pessoa nitida + fundo borrado) em 720p full-res
-        # custa ~17-30ms na CPU - o maior gargalo. Fazemos a composicao numa
-        # escala reduzida (COMPOSE_SCALE) e ampliamos: ~3x mais rapido. A pessoa
-        # perde um pouco de nitidez, mas o ganho de FPS compensa. (Quando houver
-        # GPU/OpenCV-CUDA, este e o ponto a acelerar sem reduzir escala.)
+        # Composicao em escala reduzida (gargalo em 720p full-res na CPU).
         cs = 0.5
         cw, ch = max(1, int(w * cs)), max(1, int(h * cs))
         frame_s = cv2.resize(frame_bgr, (cw, ch), interpolation=cv2.INTER_AREA)
 
-        # Mascara na escala da composicao.
-        mask = self._refine_mask(confidence, (ch, cw), mask_threshold, edge_softness)
+        mask = self._refine_mask(conf, (ch, cw), mask_threshold, edge_softness)
         self._last_mask = mask
 
-        # Fundo borrado na escala da composicao.
         k = self._odd(max(3, int(blur_strength * cs)))
         blurred_s = cv2.GaussianBlur(frame_s, (k, k), 0)
 
-        # Composicao alpha em escala reduzida (float32 in-place).
         alpha = mask[:, :, np.newaxis].astype(np.float32, copy=False)
         fg = frame_s.astype(np.float32)
         bg = blurred_s.astype(np.float32)
@@ -80,25 +94,15 @@ class BackgroundBlur:
         fg *= alpha
         fg += bg
         out_s = fg.astype(np.uint8)
-
-        # Amplia o resultado de volta a resolucao cheia.
         return cv2.resize(out_s, (w, h), interpolation=cv2.INTER_LINEAR)
 
-    def _refine_mask(
-        self,
-        confidence: np.ndarray,
-        shape: tuple[int, int],
-        threshold: float,
-        edge_softness: int,
-    ) -> np.ndarray:
-        h, w = shape
-        if confidence.shape[:2] != (h, w):
-            confidence = cv2.resize(confidence, (w, h), interpolation=cv2.INTER_LINEAR)
-        # Binariza no threshold e suaviza a borda para a transicao nao serrilhar.
-        mask = (confidence >= threshold).astype(np.float32)
+    def _refine_mask(self, confidence, shape, threshold, edge_softness):
+        ch, cw = shape
+        m = cv2.resize(confidence, (cw, ch), interpolation=cv2.INTER_LINEAR)
+        m = (m >= threshold).astype(np.float32)
         k = self._odd(edge_softness)
-        mask = cv2.GaussianBlur(mask, (k, k), 0)
-        return np.clip(mask, 0.0, 1.0)
+        m = cv2.GaussianBlur(m, (k, k), 0)
+        return np.clip(m, 0.0, 1.0)
 
     @staticmethod
     def _odd(value: int) -> int:
@@ -106,4 +110,4 @@ class BackgroundBlur:
         return value if value % 2 == 1 else value + 1
 
     def close(self) -> None:
-        self._segmenter.close()
+        self._sess = None

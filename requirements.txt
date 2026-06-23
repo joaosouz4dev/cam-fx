@@ -1,5 +1,7 @@
 # CamFX - dependencias de runtime
-# MediaPipe Tasks (Image Segmenter + Face Detector) - visao computacional do Google
+# Segmentacao de pessoa via ONNX Runtime com GPU (DirectML) e fallback CPU.
+onnxruntime-directml==1.24.4
+# MediaPipe (apenas para o auto-framing / Face Detector).
 mediapipe==0.10.18
 # Processamento de imagem (blur, composicao, redimensionamento)
 opencv-python==4.10.0.84

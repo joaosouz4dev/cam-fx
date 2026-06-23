@@ -27,7 +27,7 @@ def main() -> int:
     sep = ";" if os.name == "nt" else ":"
     add_data = [
         # modelos -> pasta "models" dentro do bundle
-        f"{models_dir() / 'selfie_segmenter.tflite'}{sep}models",
+        f"{models_dir() / 'selfie_segmentation.onnx'}{sep}models",
         f"{models_dir() / 'blaze_face_short_range.tflite'}{sep}models",
     ]
 
@@ -40,6 +40,8 @@ def main() -> int:
         "--name", "CamFX",
         # MediaPipe carrega binarios/grafos via arquivos de dados:
         "--collect-all", "mediapipe",
+        # ONNX Runtime (DirectML): binarios/DLLs precisam vir completos.
+        "--collect-all", "onnxruntime",
         # comtypes gera wrappers COM; precisa vir completo para o pygrabber
         # (captura DirectShow rapida) funcionar dentro do .exe.
         "--collect-all", "comtypes",

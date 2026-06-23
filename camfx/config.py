@@ -34,6 +34,10 @@ class Config:
     mask_threshold: float = 0.5        # corte da mascara de segmentacao [0..1]
     edge_softness: int = 7             # suavizacao da borda da mascara
 
+    # Processamento: "auto" usa GPU (DirectML) se disponivel, senao CPU.
+    # "gpu" forca DirectML; "cpu" forca CPU.
+    compute_device: str = "auto"       # auto | gpu | cpu
+
     # Auto-framing desligado por padrao: ele recorta e amplia (zoom), o que
     # reduz a nitidez vs a webcam crua. O usuario liga se quiser o efeito.
     framing_enabled: bool = False

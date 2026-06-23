@@ -152,6 +152,23 @@ class CamFXApp:
         self._slider(panel, "Zoom", 10, 25,
                      int(self.config.framing_zoom * 10), self._on_zoom)
 
+        # Processamento (GPU/CPU)
+        section("Processamento")
+        from .segmentation import available_devices
+
+        devs = available_devices()  # ['gpu','cpu'] ou ['cpu']
+        labels = {"auto": "Automatico", "gpu": "GPU (DirectML)", "cpu": "CPU"}
+        # So oferece GPU se houver.
+        opts = ["auto"] + devs if "gpu" in devs else ["auto", "cpu"]
+        self._dev_values = opts
+        self._dev_combo = ttk.Combobox(
+            panel, state="readonly", width=26,
+            values=[labels[o] for o in opts])
+        cur = self.config.compute_device if self.config.compute_device in opts else "auto"
+        self._dev_combo.current(opts.index(cur))
+        self._dev_combo.bind("<<ComboboxSelected>>", self._on_device_change)
+        self._dev_combo.pack(anchor="w", **pad)
+
         ttk.Separator(panel).pack(fill="x", pady=12, **pad)
 
         # Inicializacao
@@ -309,6 +326,14 @@ class CamFXApp:
         self.config.save()
         if self.pipeline.running:
             self.pipeline.restart()
+
+    def _on_device_change(self, _evt=None):
+        self.config.compute_device = self._dev_values[self._dev_combo.current()]
+        self.config.save()
+        # Reinicia o pipeline para recarregar a segmentacao no device escolhido.
+        if self.pipeline.running:
+            import threading
+            threading.Thread(target=self.pipeline.restart, daemon=True).start()
 
     def _on_toggle_blur(self):
         self.config.blur_enabled = self._blur_var.get()

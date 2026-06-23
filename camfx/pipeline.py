@@ -268,10 +268,12 @@ class Pipeline:
         try:
             from .log import log as _log
 
-            self._blur = BackgroundBlur() if cfg.blur_enabled else None
+            self._blur = (BackgroundBlur(device=cfg.compute_device)
+                          if cfg.blur_enabled else None)
             self._framing = AutoFraming() if cfg.framing_enabled else None
+            prov = self._blur.active_provider if self._blur else "-"
             _log(f"modelos carregados: blur={self._blur is not None} "
-                 f"framing={self._framing is not None}")
+                 f"framing={self._framing is not None} provider={prov}")
         except Exception as exc:  # modelo ausente, etc.
             cap.release()
             from .log import log as _log

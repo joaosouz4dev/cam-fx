@@ -20,9 +20,14 @@ FACE_DETECTOR_URL = (
     "https://storage.googleapis.com/mediapipe-models/face_detector/"
     "blaze_face_short_range/float16/latest/blaze_face_short_range.tflite"
 )
+# Selfie segmentation em ONNX (roda via ONNX Runtime, GPU DirectML ou CPU).
+SELFIE_ONNX_URL = (
+    "https://huggingface.co/onnx-community/mediapipe_selfie_segmentation/"
+    "resolve/main/onnx/model.onnx"
+)
 
 _MODELS = {
-    "selfie_segmenter.tflite": SELFIE_SEGMENTER_URL,
+    "selfie_segmentation.onnx": SELFIE_ONNX_URL,
     "blaze_face_short_range.tflite": FACE_DETECTOR_URL,
 }
 

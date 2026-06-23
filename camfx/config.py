@@ -25,8 +25,8 @@ class Config:
     camera_index: int = 0
     # 640x480 abre rapido na maioria das webcams; resolucoes altas podem fazer
     # o backend MSMF do Windows demorar dezenas de segundos para negociar.
-    width: int = 640
-    height: int = 480
+    width: int = 1280
+    height: int = 720
     fps: int = 30
 
     blur_enabled: bool = True
@@ -34,7 +34,9 @@ class Config:
     mask_threshold: float = 0.5        # corte da mascara de segmentacao [0..1]
     edge_softness: int = 7             # suavizacao da borda da mascara
 
-    framing_enabled: bool = True
+    # Auto-framing desligado por padrao: ele recorta e amplia (zoom), o que
+    # reduz a nitidez vs a webcam crua. O usuario liga se quiser o efeito.
+    framing_enabled: bool = False
     framing_zoom: float = 1.4          # zoom maximo do auto-framing
     framing_smoothing: float = 0.9     # 0..1 (quanto maior, mais suave/lento)
 

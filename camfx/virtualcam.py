@@ -19,8 +19,8 @@ import struct
 
 import numpy as np
 
-WIDTH = 640
-HEIGHT = 480
+WIDTH = 1280
+HEIGHT = 720
 BPP = 3
 FRAME_BYTES = WIDTH * HEIGHT * BPP
 
@@ -69,16 +69,12 @@ class CamFXVirtualCamera:
             frame_bgr = np.ascontiguousarray(frame_bgr)
 
         self._seq += 1
-        # Escreve os pixels primeiro, depois o header com o novo frame_seq por
-        # ultimo (o leitor usa frame_seq para detectar frame completo).
+        # Escreve os pixels primeiro, depois o header. NAO sobrescreve o campo
+        # 'consumers' (offset 24) - ele e o heartbeat gerenciado pelo driver.
+        # Por isso escrevemos so os primeiros 24 bytes (magic..ts_qpc).
         self._mm[_HEADER_SIZE:TOTAL_BYTES] = frame_bgr.tobytes()
-        header = struct.pack(_HEADER_FMT, MAGIC, WIDTH, HEIGHT, self._seq, 0,
-                             self.consumer_count())
-        self._mm[0:_HEADER_SIZE] = header
-
-    def consumer_count(self) -> int:
-        raw = bytes(self._mm[_CONSUMERS_OFFSET:_CONSUMERS_OFFSET + 4])
-        return struct.unpack("<i", raw)[0]
+        header = struct.pack("<iiiiq", MAGIC, WIDTH, HEIGHT, self._seq, 0)
+        self._mm[0:24] = header
 
     def sleep_until_next_frame(self) -> None:
         # Dorme apenas o tempo restante ate o proximo frame, descontando o tempo
@@ -133,20 +129,41 @@ def is_driver_registered() -> bool:
 
 
 class DemandMonitor:
-    """Observa o contador de consumidores no arquivo compartilhado.
+    """Detecta se a camera CamFX esta sendo consumida por algum app.
 
-    Permite o modo sob demanda: o app so liga a captura/efeitos quando algum
-    aplicativo abre a camera CamFX (o source MF marca consumers > 0).
+    O driver grava um heartbeat (GetTickCount, em ms) no campo 'consumers' a cada
+    frame pedido. So ha pedido enquanto algum app consome a CamFX. Aqui lemos
+    esse tick e comparamos com o tick atual: se foi atualizado recentemente, ha
+    consumidor ativo; se ficou parado, ninguem esta usando.
     """
+
+    _IDLE_MS = 1500  # sem heartbeat por mais que isso = ninguem consumindo
 
     def __init__(self):
         _ensure_file()
         self._fh = open(FRAME_FILE, "r+b")
         self._mm = mmap.mmap(self._fh.fileno(), TOTAL_BYTES)
+        import ctypes
 
-    def consumer_count(self) -> int:
+        self._GetTickCount = ctypes.windll.kernel32.GetTickCount
+
+    def _heartbeat(self) -> int:
         raw = bytes(self._mm[_CONSUMERS_OFFSET:_CONSUMERS_OFFSET + 4])
-        return struct.unpack("<i", raw)[0]
+        # tick e gravado como LONG (pode dar negativo apos ~24.8 dias de uptime);
+        # tratamos como uint32.
+        return struct.unpack("<I", raw)[0]
+
+    def in_use(self) -> bool:
+        last = self._heartbeat()
+        if last == 0:
+            return False
+        now = self._GetTickCount() & 0xFFFFFFFF
+        delta = (now - last) & 0xFFFFFFFF
+        return delta < self._IDLE_MS
+
+    # Compatibilidade: 1 se em uso, 0 caso contrario.
+    def consumer_count(self) -> int:
+        return 1 if self.in_use() else 0
 
     def close(self):
         try:

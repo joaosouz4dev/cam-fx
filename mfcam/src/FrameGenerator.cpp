@@ -54,8 +54,11 @@ bool FrameGenerator::FillBitmapFromCamFX()
     if (!_camfxShared || !_bitmap) return false;
 
     auto hdr = (CamFXSharedHeader*)_camfxShared;
-    // Sinaliza presenca de consumidor (o app liga a camera sob demanda).
-    InterlockedExchange(&hdr->consumers, 1);
+    // Heartbeat: grava o tick atual a cada frame pedido. O Generate so e chamado
+    // enquanto algum app consome a camera; quando o consumidor para, este tick
+    // para de atualizar e o app detecta (timestamp antigo) para desligar a
+    // webcam. Usamos o campo 'consumers' para carregar esse tick (ms).
+    InterlockedExchange(&hdr->consumers, (LONG)GetTickCount());
 
     static int logCount = 0;
     if (logCount++ % 60 == 0)

@@ -4,8 +4,8 @@
 #pragma once
 #include <windows.h>
 
-#define CAMFX_WIDTH   640
-#define CAMFX_HEIGHT  480
+#define CAMFX_WIDTH   1280
+#define CAMFX_HEIGHT  720
 #define CAMFX_FPS     30
 #define CAMFX_FRAME_BYTES (CAMFX_WIDTH * CAMFX_HEIGHT * 3)   // BGR24
 

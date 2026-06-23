@@ -29,6 +29,9 @@ def main() -> int:
         # modelos -> pasta "models" dentro do bundle
         f"{models_dir() / 'selfie_segmentation.onnx'}{sep}models",
         f"{models_dir() / 'blaze_face_short_range.tflite'}{sep}models",
+        # logo/icone -> pasta "assets" dentro do bundle
+        f"{Path('assets') / 'logo.png'}{sep}assets",
+        f"{Path('assets') / 'icon.ico'}{sep}assets",
     ]
 
     cmd = [
@@ -38,6 +41,7 @@ def main() -> int:
         "--onefile",
         "--windowed",          # sem console
         "--name", "CamFX",
+        "--icon", str(Path("assets") / "icon.ico"),  # icone do .exe
         # MediaPipe carrega binarios/grafos via arquivos de dados:
         "--collect-all", "mediapipe",
         # ONNX Runtime (DirectML): binarios/DLLs precisam vir completos.

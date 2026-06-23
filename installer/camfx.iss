@@ -30,6 +30,8 @@ OutputBaseFilename=CamFX-Setup
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
+SetupIconFile=..\assets\icon.ico
+UninstallDisplayIcon={app}\{#AppExe}
 ; Precisa de admin para registrar o driver (regsvr32 em HKLM) e escrever em Program Files.
 PrivilegesRequired=admin
 ArchitecturesAllowed=x64compatible

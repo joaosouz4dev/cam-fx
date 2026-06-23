@@ -12,13 +12,20 @@ import threading
 import pystray
 from PIL import Image, ImageDraw
 
+from .branding import logo_path
+
 
 def _make_icon_image() -> Image.Image:
+    # Usa a logo do CamFX (patinho + webcam). Fallback para um icone simples.
+    p = logo_path()
+    if p is not None:
+        try:
+            return Image.open(p).convert("RGBA")
+        except Exception:
+            pass
     img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
-    draw.ellipse((6, 6, 58, 58), fill=(34, 139, 230, 255))   # lente
-    draw.ellipse((20, 20, 44, 44), fill=(15, 23, 42, 255))   # miolo
-    draw.ellipse((26, 26, 34, 34), fill=(148, 197, 253, 255))  # reflexo
+    draw.ellipse((6, 6, 58, 58), fill=(255, 204, 0, 255))
     return img
 
 

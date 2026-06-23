@@ -53,6 +53,15 @@ class CamFXApp:
         self.root.resizable(False, False)
         self.root.protocol("WM_DELETE_WINDOW", self.hide_to_tray)
 
+        # Icone da janela (logo do CamFX).
+        from .branding import icon_path
+        _ico = icon_path()
+        if _ico is not None:
+            try:
+                self.root.iconbitmap(default=str(_ico))
+            except Exception:
+                pass
+
         from . import theme
         self._theme = theme
         theme.apply(self.root)

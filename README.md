@@ -1,4 +1,9 @@
-# CamFX — Câmera Virtual com Blur de Fundo e Auto-Framing para Windows 11
+<p align="center">
+  <img src="assets/logo.png" alt="CamFX" width="180">
+</p>
+
+<h1 align="center">CamFX</h1>
+<p align="center"><strong>Câmera Virtual com Blur de Fundo e Auto-Framing para Windows 11</strong></p>
 
 **Desfoque de fundo (background blur) e auto-framing em tempo real para a sua webcam, no Windows 11.** O CamFX cria uma câmera virtual que funciona no **Google Meet, Microsoft Teams, Zoom, Discord, OBS e Chrome** — com a qualidade e as cores da sua webcam, rodando na **GPU**. Uma alternativa leve, gratuita e de código aberto ao NVIDIA Broadcast, que aplica o efeito **só na câmera** (nunca no microfone ou nos alto-falantes).
 

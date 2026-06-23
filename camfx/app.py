@@ -45,6 +45,7 @@ class CamFXApp:
         self._demand_thread = None
         self._demand_stop = None
         self._vcam_host = None
+        self._preview_forced = False  # preview ligado mantem a camera ativa
 
         self.root = tk.Tk()
         self.root.title("CamFX")
@@ -182,8 +183,18 @@ class CamFXApp:
     # ---------- preview ----------
 
     def _on_toggle_preview(self):
-        if not self._preview_var.get():
-            # Desligou: volta ao placeholder e para de atualizar.
+        if self._preview_var.get():
+            # Ligou o preview: liga o pipeline para gerar frames, mesmo que
+            # nenhum app externo esteja usando a CamFX (assim da para conferir
+            # o resultado aqui na janela). O monitor de demanda respeita isso.
+            self._preview_forced = True
+            if not self.pipeline.running:
+                self.pipeline.start()
+            self._set_status("Pre-visualizacao ligada (camera ativa).")
+        else:
+            # Desligou: volta ao placeholder. O monitor desliga a camera se
+            # nao houver app usando.
+            self._preview_forced = False
             self._preview_label.configure(image=self._preview_placeholder)
             self._preview_label.image = self._preview_placeholder
 
@@ -272,7 +283,9 @@ class CamFXApp:
                 if consumers != last_state:
                     log(f"demanda: consumers={consumers} pipeline_running={self.pipeline.running}")
                     last_state = consumers
-                if consumers > 0:
+                # Mantem a camera ligada se ha consumidor OU o preview esta on.
+                want_on = consumers > 0 or self._preview_forced
+                if want_on:
                     empty_since = None
                     if not self.pipeline.running:
                         self.pipeline.start()

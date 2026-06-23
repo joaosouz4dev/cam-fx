@@ -427,6 +427,18 @@ class CamFXApp:
 
 
 def main():
+    # Instancia unica: se o CamFX ja esta aberto, traz a janela existente para
+    # frente em vez de abrir outra copia.
+    from .single_instance import SingleInstance
+
+    instance = SingleInstance()
+    if not instance.acquire():
+        instance.signal_existing()
+        return  # ja ha uma instancia rodando; sai
+
     start_minimized = "--minimized" in sys.argv
     app = CamFXApp(start_minimized=start_minimized)
+    # Escuta pedidos de "mostrar janela" vindos de novas tentativas de abrir.
+    instance.listen(app.show_window)
+    app._single_instance = instance  # mantem o mutex vivo enquanto o app roda
     app.run()

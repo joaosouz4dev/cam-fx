@@ -48,9 +48,13 @@ class CamFXApp:
 
         self.root = tk.Tk()
         self.root.title("CamFX")
-        self.root.geometry("700x560")
+        self.root.geometry("940x520")
         self.root.resizable(False, False)
         self.root.protocol("WM_DELETE_WINDOW", self.hide_to_tray)
+
+        from . import theme
+        self._theme = theme
+        theme.apply(self.root)
 
         self._status_var = tk.StringVar(value="Iniciando...")
         self._cameras = list_cameras()
@@ -75,87 +79,101 @@ class CamFXApp:
 
     # ---------- construcao da UI ----------
 
-    def _build_ui(self) -> None:
-        root = ttk.Frame(self.root, padding=10)
-        root.pack(fill="both", expand=True)
+    # Dimensoes do preview (metade do frame 1280x720).
+    _PV_W = WIDTH // 2
+    _PV_H = HEIGHT // 2
 
-        # Esquerda: preview ao vivo
-        left = ttk.Frame(root)
-        left.pack(side="left", fill="both", expand=True)
+    def _build_ui(self) -> None:
+        th = self._theme
+        outer = ttk.Frame(self.root, padding=14)
+        outer.pack(fill="both", expand=True)
+
+        # ---- Esquerda: preview ----
+        left = ttk.Frame(outer)
+        left.grid(row=0, column=0, sticky="n")
+
         header = ttk.Frame(left)
         header.pack(fill="x")
-        ttk.Label(header, text="Pre-visualizacao da CamFX",
-                  font=("Segoe UI", 10, "bold")).pack(side="left")
+        ttk.Label(header, text="Pre-visualizacao", style="Title.TLabel").pack(side="left")
         self._preview_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(header, text="Mostrar", variable=self._preview_var,
-                        command=self._on_toggle_preview).pack(side="right")
+                        command=self._on_toggle_preview, style="TCheckbutton").pack(side="right")
 
-        self._preview_label = ttk.Label(left)
-        self._preview_label.pack(pady=6)
-        self._preview_placeholder = ImageTk.PhotoImage(Image.new("RGB", (WIDTH // 2, HEIGHT // 2), (20, 24, 32)))
+        # Moldura do preview (borda arredondada simulada com Frame escuro)
+        pv_frame = tk.Frame(left, bg=th.BORDER, bd=0)
+        pv_frame.pack(pady=(8, 6))
+        self._preview_label = tk.Label(pv_frame, bg="#000000", bd=0)
+        self._preview_label.pack(padx=1, pady=1)
+        self._preview_placeholder = ImageTk.PhotoImage(
+            Image.new("RGB", (self._PV_W, self._PV_H), (14, 16, 20)))
         self._preview_label.configure(image=self._preview_placeholder)
-        ttk.Label(
-            left,
-            textvariable=self._status_var,
-            foreground="#2563eb",
-            wraplength=WIDTH // 2,
-        ).pack(anchor="w", pady=(4, 0))
 
-        # Direita: controles
-        right = ttk.Frame(root)
-        right.pack(side="right", fill="y", padx=(12, 0))
+        ttk.Label(left, textvariable=self._status_var, style="Status.TLabel",
+                  wraplength=self._PV_W).pack(anchor="w", pady=(2, 0))
 
-        ttk.Label(right, text="Camera", font=("Segoe UI", 9, "bold")).pack(anchor="w")
+        # ---- Direita: painel de controles ----
+        panel = tk.Frame(outer, bg=th.SURFACE)
+        panel.grid(row=0, column=1, sticky="ns", padx=(14, 0))
+        pad = {"padx": 14}
+
+        def section(text):
+            ttk.Label(panel, text=text.upper(), style="Section.TLabel").pack(
+                anchor="w", pady=(14, 4), **pad)
+
+        # Camera
+        section("Camera de entrada")
         if not self._cameras:
             self._cameras = [(self.config.camera_index, f"Camera {self.config.camera_index}")]
         self._cam_indices = [i for i, _ in self._cameras]
-        self._cam_combo = ttk.Combobox(
-            right, state="readonly", width=24,
-            values=[name for _, name in self._cameras],
-        )
+        self._cam_combo = ttk.Combobox(panel, state="readonly", width=26,
+                                       values=[name for _, name in self._cameras])
         idx = (self._cam_indices.index(self.config.camera_index)
                if self.config.camera_index in self._cam_indices else 0)
         self._cam_combo.current(idx)
         self.config.camera_index = self._cam_indices[idx]
         self._cam_combo.bind("<<ComboboxSelected>>", self._on_camera_change)
-        self._cam_combo.pack(anchor="w", pady=(0, 10))
+        self._cam_combo.pack(anchor="w", **pad)
 
-        ttk.Label(right, text="Efeitos", font=("Segoe UI", 9, "bold")).pack(anchor="w")
+        # Efeitos
+        section("Efeitos")
         self._blur_var = tk.BooleanVar(value=self.config.blur_enabled)
-        ttk.Checkbutton(right, text="Blur de fundo", variable=self._blur_var,
-                        command=self._on_toggle_blur).pack(anchor="w")
-        self._blur_scale = self._slider(right, "Intensidade do blur", 3, 75,
-                                        self.config.blur_strength, self._on_blur_strength)
+        ttk.Checkbutton(panel, text="Desfocar o fundo", variable=self._blur_var,
+                        command=self._on_toggle_blur).pack(anchor="w", **pad)
+        self._slider(panel, "Intensidade", 3, 75,
+                     self.config.blur_strength, self._on_blur_strength)
 
         self._framing_var = tk.BooleanVar(value=self.config.framing_enabled)
-        ttk.Checkbutton(right, text="Auto-framing (segue o rosto)",
+        ttk.Checkbutton(panel, text="Auto-framing (segue o rosto)",
                         variable=self._framing_var,
-                        command=self._on_toggle_framing).pack(anchor="w")
-        self._zoom_scale = self._slider(right, "Zoom (x10)", 10, 25,
-                                        int(self.config.framing_zoom * 10), self._on_zoom)
+                        command=self._on_toggle_framing).pack(anchor="w", pady=(6, 0), **pad)
+        self._slider(panel, "Zoom", 10, 25,
+                     int(self.config.framing_zoom * 10), self._on_zoom)
 
-        ttk.Separator(right).pack(fill="x", pady=10)
+        ttk.Separator(panel).pack(fill="x", pady=12, **pad)
 
+        # Inicializacao
         self._autostart_var = tk.BooleanVar(value=autostart.is_enabled())
-        ttk.Checkbutton(right, text="Iniciar com o Windows (minimizado)",
+        ttk.Checkbutton(panel, text="Iniciar com o Windows",
                         variable=self._autostart_var,
-                        command=self._on_autostart).pack(anchor="w")
+                        command=self._on_autostart).pack(anchor="w", **pad)
 
-        ttk.Button(right, text="Minimizar para a bandeja",
-                   command=self.hide_to_tray).pack(anchor="w", fill="x", pady=(10, 0))
+        ttk.Button(panel, text="Minimizar para a bandeja",
+                   command=self.hide_to_tray).pack(fill="x", pady=(12, 0), **pad)
 
-        ttk.Label(
-            right,
-            text="A camera liga sozinha quando voce\nseleciona 'CamFX' num app de video.",
-            foreground="#6b7280", font=("Segoe UI", 8),
-        ).pack(anchor="w", pady=(10, 0))
+        ttk.Label(panel, style="Dim.TLabel", wraplength=240,
+                  text="A camera liga sozinha quando voce seleciona "
+                       "\"CamFX\" no seu app de video.").pack(
+            anchor="w", pady=(12, 14), **pad)
 
     def _slider(self, parent, label, lo, hi, value, callback):
-        ttk.Label(parent, text=label, font=("Segoe UI", 8)).pack(anchor="w")
+        th = self._theme
+        ttk.Label(parent, text=label, style="Dim.TLabel").pack(
+            anchor="w", padx=14, pady=(4, 0))
         var = tk.IntVar(value=value)
-        scale = ttk.Scale(parent, from_=lo, to=hi, variable=var, length=200,
+        scale = ttk.Scale(parent, from_=lo, to=hi, variable=var, length=232,
+                          style="Horizontal.TScale",
                           command=lambda _v: callback(var.get()))
-        scale.pack(anchor="w", pady=(0, 8))
+        scale.pack(anchor="w", padx=14, pady=(0, 4))
         return scale
 
     # ---------- preview ----------
@@ -184,7 +202,7 @@ class CamFXApp:
 
                         arr = np.frombuffer(data[_HEADER_SIZE:TOTAL_BYTES], dtype=np.uint8)
                         arr = arr.reshape((HEIGHT, WIDTH, 3))[:, :, ::-1]  # BGR->RGB
-                        img = Image.fromarray(arr).resize((WIDTH // 2, HEIGHT // 2))
+                        img = Image.fromarray(arr).resize((self._PV_W, self._PV_H))
                         photo = ImageTk.PhotoImage(img)
                         self._preview_label.configure(image=photo)
                         self._preview_label.image = photo

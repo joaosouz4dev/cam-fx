@@ -37,6 +37,13 @@ Se você usa o NVIDIA Broadcast só para desfocar o fundo da webcam, conhece os 
 - **Tema escuro** integrado ao Windows 11.
 - **Início com o Windows** (minimizado) opcional.
 - **Atualização automática:** o app verifica novas versões no GitHub e instala com um clique, direto pela janela.
+- **Troca de rosto (face swap) em tempo real** *(experimental)*: substitui o seu rosto pelo de uma foto, ao vivo. Veja o aviso de licença e uso abaixo.
+
+## Troca de rosto (face swap) — experimental
+
+O CamFX inclui um recurso **experimental** de troca de rosto em tempo real (estilo deepfake ao vivo): você escolhe uma foto de rosto e ela substitui o seu rosto na câmera. Ao ativar, é preciso aceitar os **Termos de Uso** exibidos no app (uso responsável, com consentimento das pessoas envolvidas; sem fraude, falsa identidade ou conteúdo não consentido).
+
+> ⚠️ **Aviso de licença — uso não comercial.** Este recurso usa o modelo `inswapper` (InsightFace), licenciado **apenas para pesquisa / uso não comercial**. Portanto, **a troca de rosto não pode ser usada comercialmente** sem uma licença apropriada do detentor do modelo. O restante do CamFX (blur, auto-framing) permanece sob licença MIT. Os modelos de IA da troca de rosto são **baixados sob demanda** na primeira ativação (cerca de 1 GB) e não acompanham o instalador.
 
 ## Compatibilidade
 

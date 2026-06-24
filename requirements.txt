@@ -16,3 +16,7 @@ pystray==0.19.5
 Pillow==10.4.0
 # Enumeracao de cameras por nome (DirectShow) para filtrar a camera virtual
 pygrabber==0.2
+
+# A troca de rosto (face swap) tem dependencias pesadas e licenca de modelo
+# nao comercial - ficam separadas em requirements-faceswap.txt (opt-in). O app
+# funciona sem elas; o face swap so ativa se estiverem instaladas.

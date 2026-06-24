@@ -1,0 +1,30 @@
+# CamFX - dependencias OPCIONAIS da troca de rosto (face swap).
+#
+# Instale por cima do requirements.txt para habilitar o recurso:
+#   pip install -r requirements.txt
+#   pip install --no-deps -r requirements-faceswap.txt
+#
+# ATENCAO LICENCA: o modelo inswapper_128 (InsightFace) e licenciado APENAS para
+# pesquisa / uso nao comercial. Ver camfx/terms.py e o README. Os modelos de IA
+# (inswapper, buffalo_l, gfpgan) NAO estao aqui: sao baixados sob demanda na
+# primeira ativacao (~1 GB) para o cache do usuario.
+#
+# Instale com --no-deps: o insightface puxaria onnxruntime (conflita com o
+# onnxruntime-directml) e numpy>=2 via albumentations (quebra o mediapipe).
+# Por isso fixamos as transitivas aqui. albumentations 1.4.x mantem numpy<2.
+
+insightface==0.7.3
+onnx==1.16.2
+scikit-image==0.24.0
+
+# transitivas do insightface (necessarias por causa do --no-deps)
+requests
+easydict
+prettytable
+tqdm
+scikit-learn
+lazy_loader
+networkx
+tifffile
+imageio
+albumentations==1.4.3

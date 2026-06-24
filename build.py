@@ -61,6 +61,17 @@ def main() -> int:
         # pywebview (UI WebView2) - traz os backends e dados.
         "--collect-all", "webview",
     ]
+
+    # Face swap (branch feat/face-swap): so inclui insightface/skimage se a lib
+    # estiver instalada no ambiente. Assim o build da main (sem face swap)
+    # continua funcionando sem essas dependencias. Os MODELOS (inswapper,
+    # buffalo_l) NAO sao embutidos: baixam sob demanda para o cache do usuario.
+    import importlib.util
+    for mod, collect in (("insightface", "insightface"), ("skimage", "skimage")):
+        if importlib.util.find_spec(mod) is not None:
+            cmd += ["--collect-all", collect]
+            print(f"Incluindo {collect} no bundle (face swap).")
+
     for entry in add_data:
         cmd += ["--add-data", entry]
     cmd.append("main.py")

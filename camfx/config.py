@@ -47,6 +47,19 @@ class Config:
     start_minimized: bool = True       # inicia direto na bandeja
     autostart_capture: bool = True     # ja liga a camera virtual ao abrir
 
+    # --- Face swap (troca de rosto em tempo real) ---
+    # Recurso pesado e opcional. Desligado por padrao. Os modelos sao baixados
+    # sob demanda (centenas de MB) na primeira ativacao.
+    faceswap_enabled: bool = False
+    source_face_path: str = ""         # caminho da foto do rosto-fonte
+    faceswap_enhance: bool = False     # melhora o rosto trocado (custa FPS)
+    faceswap_backend: str = "insightface"  # ponto de troca de modelo/licenca
+    faceswap_detect_every: int = 3     # detecta o rosto a cada N frames
+
+    # --- Termos de uso (salvaguarda do face swap) ---
+    terms_accepted: bool = False
+    terms_version: int = 0             # versao dos termos que o usuario aceitou
+
     def save(self) -> None:
         CONFIG_PATH.write_text(json.dumps(asdict(self), indent=2), encoding="utf-8")
 

@@ -31,6 +31,29 @@ _MODELS = {
     "blaze_face_short_range.tflite": FACE_DETECTOR_URL,
 }
 
+# --- Modelos de face swap (baixados SOB DEMANDA, fora do instalador) ---
+# Sao grandes (centenas de MB) e tem licenca apenas-pesquisa (inswapper).
+# So baixam quando o usuario ativa a troca de rosto.
+INSWAPPER_URL = (
+    "https://huggingface.co/ezioruan/inswapper_128.onnx/"
+    "resolve/main/inswapper_128.onnx"
+)
+# GFPGAN em ONNX (melhora/restaura o rosto trocado), opcional.
+GFPGAN_URL = (
+    "https://huggingface.co/facefusion/models/"
+    "resolve/main/gfpgan_1.4.onnx"
+)
+
+_FACESWAP_MODELS = {
+    "inswapper_128.onnx": INSWAPPER_URL,
+}
+# O detector/reconhecedor (buffalo_l) e baixado pelo proprio insightface para
+# INSIGHTFACE_HOME (apontado para models_dir() em insightface_home()).
+
+_ENHANCER_MODELS = {
+    "gfpgan_1.4.onnx": GFPGAN_URL,
+}
+
 
 def models_dir() -> Path:
     """Pasta local onde os modelos ficam em cache."""
@@ -57,15 +80,80 @@ def ensure_models(progress=None) -> dict[str, Path]:
     return resolved
 
 
-def _download(url: str, dest: Path) -> None:
+def insightface_home() -> Path:
+    """Pasta onde o insightface guarda o buffalo_l (detector/recognition).
+
+    Apontamos para dentro do nosso cache para controle total (importante no
+    .exe). O insightface le a env INSIGHTFACE_HOME e espera os modelos em
+    <home>/models/<nome>.
+    """
+    home = models_dir().parent / "insightface"
+    (home / "models").mkdir(parents=True, exist_ok=True)
+    os.environ.setdefault("INSIGHTFACE_HOME", str(home))
+    return home
+
+
+def ensure_faceswap_models(progress=None) -> dict[str, Path]:
+    """Baixa os modelos de troca de rosto sob demanda. Retorna nome -> caminho.
+
+    `progress` pode ser (msg: str) ou (recebidos: int, total: int) - detectamos
+    pela aridade chamando com a forma de bytes apenas no _download.
+    """
+    insightface_home()  # garante a env antes de o insightface carregar
+    resolved: dict[str, Path] = {}
+    for name, url in _FACESWAP_MODELS.items():
+        dest = models_dir() / name
+        if not dest.exists() or dest.stat().st_size == 0:
+            if progress:
+                progress(f"Baixando {name}...")
+            _download(url, dest, on_bytes=_bytes_cb(progress))
+        resolved[name] = dest
+    return resolved
+
+
+def ensure_enhancer_model(progress=None) -> Path:
+    """Baixa o modelo de melhoria de rosto (GFPGAN) sob demanda."""
+    name = next(iter(_ENHANCER_MODELS))
+    url = _ENHANCER_MODELS[name]
+    dest = models_dir() / name
+    if not dest.exists() or dest.stat().st_size == 0:
+        if progress:
+            progress(f"Baixando {name}...")
+        _download(url, dest, on_bytes=_bytes_cb(progress))
+    return dest
+
+
+def _bytes_cb(progress):
+    """Adapta um callback de progresso para receber (recebidos, total)."""
+    if progress is None:
+        return None
+
+    def cb(got, total):
+        try:
+            if total > 0:
+                progress(f"Baixando... {int(got * 100 / total)}%")
+            else:
+                progress(f"Baixando... {got // (1024 * 1024)} MB")
+        except Exception:
+            pass
+
+    return cb
+
+
+def _download(url: str, dest: Path, on_bytes=None) -> None:
     tmp = dest.with_suffix(dest.suffix + ".part")
     req = urllib.request.Request(url, headers={"User-Agent": "CamFX/1.0"})
-    with urllib.request.urlopen(req, timeout=60) as resp, open(tmp, "wb") as out:
+    with urllib.request.urlopen(req, timeout=120) as resp, open(tmp, "wb") as out:
+        total = int(resp.headers.get("Content-Length") or 0)
+        got = 0
         while True:
-            chunk = resp.read(64 * 1024)
+            chunk = resp.read(256 * 1024)
             if not chunk:
                 break
             out.write(chunk)
+            got += len(chunk)
+            if on_bytes:
+                on_bytes(got, total)
     tmp.replace(dest)
 
 

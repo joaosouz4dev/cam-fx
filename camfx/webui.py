@@ -18,6 +18,7 @@ from pathlib import Path
 import webview
 
 from . import autostart
+from . import terms
 from .branding import icon_path, logo_path
 from .config import Config
 from .log import log
@@ -153,12 +154,110 @@ class Api:
             "framing_enabled": self.config.framing_enabled,
             "framing_zoom": self.config.framing_zoom,
             "autostart": autostart.is_enabled(),
+            "faceswap_enabled": self.config.faceswap_enabled,
+            "faceswap_enhance": self.config.faceswap_enhance,
+            "has_source_face": bool(self.config.source_face_path),
+            "terms_accepted": not terms.needs_acceptance(self.config),
         }
 
     def get_status(self):
         if self.pipeline.running:
             return f"Transmitindo na CamFX  ·  {self.pipeline.fps:.0f} FPS"
         return self._status
+
+    # ---------- termos de uso (face swap) ----------
+
+    def get_terms(self):
+        return {"text": terms.text(), "version": terms.TERMS_VERSION}
+
+    def terms_status(self):
+        return {"needs_acceptance": terms.needs_acceptance(self.config)}
+
+    def accept_terms(self):
+        terms.accept(self.config, app_version=get_version())
+        return {"accepted": True}
+
+    # ---------- face swap ----------
+
+    def set_faceswap_enabled(self, on):
+        # Gate de seguranca: nunca liga sem aceite dos termos.
+        if on and terms.needs_acceptance(self.config):
+            return {"ok": False, "needs_terms": True}
+        self.config.faceswap_enabled = bool(on)
+        self.config.save()
+        if self.pipeline.running:
+            threading.Thread(target=self.pipeline.restart, daemon=True).start()
+        return {"ok": True}
+
+    def set_faceswap_enhance(self, on):
+        self.config.faceswap_enhance = bool(on)
+        self.config.save()
+        if self.pipeline.running:
+            threading.Thread(target=self.pipeline.restart, daemon=True).start()
+
+    def choose_source_face(self):
+        """Abre um dialogo para escolher a foto do rosto-fonte.
+
+        Valida que ha um rosto na imagem (quando o backend estiver disponivel) e
+        retorna um thumbnail base64 para a UI. Por ora (esqueleto) so valida que
+        e uma imagem legivel; a deteccao de rosto entra com o backend.
+        """
+        try:
+            result = self._window.create_file_dialog(
+                webview.OPEN_DIALOG, allow_multiple=False,
+                file_types=("Imagens (*.jpg;*.jpeg;*.png;*.bmp;*.webp)",),
+            )
+        except Exception as exc:
+            log(f"choose_source_face: dialogo falhou: {exc!r}")
+            return {"error": "Nao foi possivel abrir o seletor de arquivos."}
+        if not result:
+            return {}
+        path = result[0] if isinstance(result, (list, tuple)) else result
+        thumb = self._make_face_thumb(path)
+        if not thumb:
+            return {"error": "Nao foi possivel ler essa imagem."}
+        self.config.source_face_path = path
+        self.config.save()
+        # Reaplica no pipeline se estiver rodando. Se o swap ja esta carregado,
+        # so troca a foto (leve, sem restart). Se ainda nao ha swapper (ex.: foi
+        # ligado sem foto), ai sim precisa de um restart para carrega-lo.
+        if self.pipeline.running:
+            if getattr(self.pipeline, "_swapper", None):
+                threading.Thread(
+                    target=self.pipeline.update_source_face, daemon=True).start()
+            else:
+                threading.Thread(
+                    target=self.pipeline.restart, daemon=True).start()
+        return {"thumb": thumb}
+
+    def get_source_face_thumb(self):
+        if not self.config.source_face_path:
+            return None
+        return self._make_face_thumb(self.config.source_face_path)
+
+    def _make_face_thumb(self, path):
+        """Le a imagem e devolve um thumbnail quadrado em data URL (JPEG)."""
+        try:
+            import os
+            if not path or not os.path.exists(path):
+                return None
+            import cv2, numpy as np
+            data = np.fromfile(path, dtype=np.uint8)  # suporta acentos no caminho
+            img = cv2.imdecode(data, cv2.IMREAD_COLOR)
+            if img is None:
+                return None
+            h, w = img.shape[:2]
+            side = min(h, w)
+            y0, x0 = (h - side) // 2, (w - side) // 2
+            crop = img[y0:y0 + side, x0:x0 + side]
+            crop = cv2.resize(crop, (96, 96))
+            ok, buf = cv2.imencode(".jpg", crop, [cv2.IMWRITE_JPEG_QUALITY, 80])
+            if not ok:
+                return None
+            return "data:image/jpeg;base64," + base64.b64encode(buf).decode("ascii")
+        except Exception as exc:
+            log(f"_make_face_thumb: {exc!r}")
+            return None
 
     # ---------- atualizacao ----------
 

@@ -326,7 +326,7 @@ def run(start_minimized: bool = False, instance=None):
         "CamFX",
         url=str(ui / "index.html"),
         js_api=api,
-        width=1180, height=680, min_size=(1000, 620),
+        width=1180, height=760, min_size=(900, 560),
         background_color="#0e1013",
         hidden=start_minimized,
     )

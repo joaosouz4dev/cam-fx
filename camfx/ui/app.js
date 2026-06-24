@@ -45,6 +45,20 @@ async function init() {
   applyDisabled("blur-sub", state.blur_enabled);
   applyDisabled("framing-sub", state.framing_enabled);
 
+  // face swap (o sub fica sempre ativo: o usuario pode escolher a foto antes
+  // de ligar o efeito; o toggle controla apenas se o swap roda)
+  setToggle("tg-faceswap", state.faceswap_enabled);
+  setToggle("tg-enhance", state.faceswap_enhance);
+  if (state.has_source_face) {
+    try {
+      const thumb = await api().get_source_face_thumb();
+      if (thumb) {
+        document.getElementById("src-face-img").src = thumb;
+        document.getElementById("src-face").classList.add("show");
+      }
+    } catch (e) {}
+  }
+
   // versao no rodape
   try {
     const v = await api().get_app_version();
@@ -214,5 +228,71 @@ async function checkUpdate() {
     link.textContent = "Verificar atualizações";
   }
 }
+
+// ---- face swap ----
+async function toggleFaceswap() {
+  // Liga so apos aceitar os termos.
+  if (!state.faceswap_enabled && !state.terms_accepted) {
+    showTerms("faceswap");
+    return;
+  }
+  state.faceswap_enabled = !state.faceswap_enabled;
+  setToggle("tg-faceswap", state.faceswap_enabled);
+  applyDisabled("faceswap-sub", state.faceswap_enabled);
+  api().set_faceswap_enabled(state.faceswap_enabled);
+}
+
+function toggleEnhance() {
+  state.faceswap_enhance = !state.faceswap_enhance;
+  setToggle("tg-enhance", state.faceswap_enhance);
+  api().set_faceswap_enhance(state.faceswap_enhance);
+}
+
+async function chooseSourceFace() {
+  try {
+    const r = await api().choose_source_face();
+    if (r && r.thumb) {
+      document.getElementById("src-face-img").src = r.thumb;
+      document.getElementById("src-face").classList.add("show");
+      state.has_source_face = true;
+    } else if (r && r.error) {
+      alert(r.error);
+    }
+  } catch (e) {}
+}
+
+// ---- termos de uso ----
+let termsContext = null;   // o que fazer apos aceitar
+
+async function showTerms(context) {
+  termsContext = context || null;
+  try {
+    const t = await api().get_terms();
+    if (t && t.text) document.getElementById("terms-text").textContent = t.text;
+  } catch (e) {}
+  document.getElementById("terms-overlay").classList.add("show");
+}
+
+async function acceptTerms() {
+  try { await api().accept_terms(); } catch (e) {}
+  state.terms_accepted = true;
+  document.getElementById("terms-overlay").classList.remove("show");
+  // Se o usuario veio do toggle de face swap, liga agora.
+  if (termsContext === "faceswap") {
+    state.faceswap_enabled = true;
+    setToggle("tg-faceswap", true);
+    applyDisabled("faceswap-sub", true);
+    api().set_faceswap_enabled(true);
+  }
+  termsContext = null;
+}
+
+function declineTerms() {
+  document.getElementById("terms-overlay").classList.remove("show");
+  termsContext = null;
+}
+
+// O Python pode pedir para exibir os termos no startup.
+window.camfxShowTerms = function () { showTerms(null); };
 
 window.addEventListener("pywebviewready", init);

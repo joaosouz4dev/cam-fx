@@ -139,6 +139,49 @@
   .footer{display:flex; align-items:center; justify-content:center; gap:8px;
     font-size:11px; color:var(--dim); padding-top:2px}
   .footer a{color:var(--dim); cursor:pointer; text-decoration:underline}
+
+  /* ---- overlay de termos de uso ---- */
+  .overlay{display:none; position:fixed; inset:0; z-index:50;
+    background:rgba(8,9,11,.82); align-items:center; justify-content:center;
+    padding:28px}
+  .overlay.show{display:flex}
+  .terms{background:var(--panel); border:1px solid var(--line);
+    border-radius:var(--radius); width:min(640px,100%); max-height:86vh;
+    display:flex; flex-direction:column; overflow:hidden}
+  .terms .t-top{display:flex; align-items:center; gap:12px; padding:18px 20px;
+    border-bottom:1px solid var(--line)}
+  .terms .t-top .t-ic{width:36px; height:36px; border-radius:9px; flex:none;
+    background:rgba(245,180,23,.15); display:flex; align-items:center;
+    justify-content:center}
+  .terms .t-top .t-ic svg{width:20px; height:20px; fill:var(--accent)}
+  .terms .t-top h2{font-size:16px; font-weight:600}
+  .terms .t-body{padding:18px 20px; overflow-y:auto; white-space:pre-wrap;
+    font-size:13px; line-height:1.55; color:#cfd3d9}
+  .terms .t-body::-webkit-scrollbar{width:8px}
+  .terms .t-body::-webkit-scrollbar-thumb{background:var(--line); border-radius:4px}
+  .terms .t-foot{display:flex; gap:10px; justify-content:flex-end;
+    padding:14px 20px; border-top:1px solid var(--line)}
+  .t-btn{border:none; border-radius:11px; padding:11px 18px; font-size:14px;
+    font-weight:700; cursor:pointer}
+  .t-btn.accept{background:var(--accent); color:#1a1d22}
+  .t-btn.accept:hover{background:var(--accent2)}
+  .t-btn.decline{background:transparent; color:var(--dim);
+    border:1px solid var(--line)}
+
+  /* ---- botao secundario (escolher foto) ---- */
+  .btn-sec{width:100%; background:var(--card2); color:var(--text);
+    border:1px solid var(--line); border-radius:12px; padding:11px 14px;
+    font-size:14px; font-weight:600; cursor:pointer; display:flex;
+    align-items:center; justify-content:center; gap:9px; margin-top:12px}
+  .btn-sec:hover{border-color:var(--accent)}
+  .btn-sec svg{width:16px; height:16px; fill:var(--dim)}
+  .src-face{display:none; align-items:center; gap:10px; margin-top:12px;
+    background:var(--card2); border:1px solid var(--line); border-radius:12px;
+    padding:8px 10px}
+  .src-face.show{display:flex}
+  .src-face img{width:44px; height:44px; border-radius:8px; object-fit:cover;
+    background:#000; flex:none}
+  .src-face .sf-txt{font-size:12px; color:var(--dim)}
 </style>
 </head>
 <body>
@@ -241,6 +284,40 @@
 
     <div class="card">
       <div class="c-head">
+        <svg viewBox="0 0 24 24"><path d="M12 2a5 5 0 0 1 5 5 5 5 0 0 1-10 0 5 5 0 0 1 5-5zm0 12c4 0 8 2 8 5v3H4v-3c0-3 4-5 8-5z"/></svg>
+        <span>Troca de rosto</span>
+      </div>
+
+      <div class="row">
+        <div class="label">
+          <svg viewBox="0 0 24 24"><path d="M12 2a5 5 0 0 1 5 5 5 5 0 0 1-10 0 5 5 0 0 1 5-5z"/></svg>
+          Trocar meu rosto
+        </div>
+        <div id="tg-faceswap" class="toggle" onclick="toggleFaceswap()"></div>
+      </div>
+
+      <div class="sub" id="faceswap-sub">
+        <button class="btn-sec" onclick="chooseSourceFace()">
+          <svg viewBox="0 0 24 24"><path d="M4 5h16v14H4zM4 17l5-5 4 4 3-3 4 4"/></svg>
+          Escolher foto do rosto
+        </button>
+        <div class="src-face" id="src-face">
+          <img id="src-face-img" alt="">
+          <div class="sf-txt">Rosto-fonte selecionado</div>
+        </div>
+
+        <div class="row" style="margin-top:14px">
+          <div class="label">
+            <svg viewBox="0 0 24 24"><path d="M12 2l1.6 4.6L18 8l-4.4 1.4L12 14l-1.6-4.6L6 8l4.4-1.4L12 2z"/></svg>
+            Melhorar nitidez do rosto
+          </div>
+          <div id="tg-enhance" class="toggle" onclick="toggleEnhance()"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="c-head">
         <svg viewBox="0 0 24 24"><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zm9 4l-2 .5.8 1.9-1.4 1.4-1.9-.8L15 18l-.5 2h-2L12 18l-1.9.8-1.4-1.4.8-1.9L7.5 15 5.5 14.5 5 12.5 7 12l-.8-1.9 1.4-1.4 1.9.8L11 7l.5-2h2L14 7l1.9-.8 1.4 1.4-.8 1.9 1.9.5z"/></svg>
         <span>Processamento</span>
       </div>
@@ -266,6 +343,23 @@
       <span id="app-version">CamFX</span>
       <span>·</span>
       <a id="check-update" onclick="checkUpdate()">Verificar atualizações</a>
+    </div>
+  </div>
+</div>
+
+<!-- Overlay de termos de uso (face swap) -->
+<div class="overlay" id="terms-overlay">
+  <div class="terms">
+    <div class="t-top">
+      <div class="t-ic">
+        <svg viewBox="0 0 24 24"><path d="M12 2l8 4v6c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10V6l8-4z"/></svg>
+      </div>
+      <h2>Termos de uso da troca de rosto</h2>
+    </div>
+    <div class="t-body" id="terms-text">Carregando...</div>
+    <div class="t-foot">
+      <button class="t-btn decline" onclick="declineTerms()">Recusar</button>
+      <button class="t-btn accept" onclick="acceptTerms()">Aceitar e continuar</button>
     </div>
   </div>
 </div>

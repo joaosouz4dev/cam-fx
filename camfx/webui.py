@@ -8,6 +8,7 @@ a CamFX), preview, controles de efeito e device, bandeja e instancia unica.
 from __future__ import annotations
 
 import base64
+import json
 import struct
 import sys
 import threading
@@ -22,7 +23,11 @@ from .config import Config
 from .log import log
 from .pipeline import Pipeline, list_cameras
 from .tray import TrayIcon
+from .updater import (
+    UpdateChecker, download_installer, run_installer, check_for_update,
+)
 from .vcam_host import VCamHost
+from .version import get_version
 from .virtualcam import (
     DemandMonitor, FRAME_FILE, TOTAL_BYTES, _HEADER_SIZE, WIDTH, HEIGHT,
 )
@@ -51,6 +56,8 @@ class Api:
         self._demand_monitor = None
         self._demand_stop = None
         self._logo_data = self._encode_logo()
+        self._update_checker = None
+        self._update_info = None
 
     # ---------- ciclo de vida ----------
 
@@ -75,6 +82,27 @@ class Api:
             is_running=lambda: self.pipeline.running,
         )
         self.tray.run_detached()
+
+        # Auto-atualizacao: checa ao abrir (com pequeno atraso) e a cada 6h.
+        self._update_checker = UpdateChecker(on_update=self._on_update_found)
+        self._update_checker.start()
+
+    def _on_update_found(self, info):
+        """Chamado pelo checker quando ha uma versao nova. Mostra o banner."""
+        self._update_info = info
+        self._push_update_banner(info)
+
+    def _push_update_banner(self, info):
+        if not self._window or not info:
+            return
+        try:
+            ver = json.dumps(info["version"])
+            notes = json.dumps(info.get("notes", "")[:600])
+            self._window.evaluate_js(
+                f"window.camfxUpdateAvailable && window.camfxUpdateAvailable({ver}, {notes})"
+            )
+        except Exception as exc:
+            log(f"updater: falha ao notificar UI: {exc!r}")
 
     def _demand_loop(self):
         empty_since = None
@@ -131,6 +159,69 @@ class Api:
         if self.pipeline.running:
             return f"Transmitindo na CamFX  ·  {self.pipeline.fps:.0f} FPS"
         return self._status
+
+    # ---------- atualizacao ----------
+
+    def get_app_version(self):
+        return get_version()
+
+    def check_update_now(self):
+        """Checa na hora (botao manual). Retorna info ou None."""
+        info = check_for_update()
+        self._update_info = info
+        if info:
+            self._update_info = info
+        return info
+
+    def download_and_install_update(self):
+        """Baixa o instalador da versao nova e o executa, encerrando o app.
+
+        Retorna {ok: bool, error?: str}. Em caso de sucesso o processo sai;
+        o instalador silencioso assume a partir dai.
+        """
+        info = self._update_info or check_for_update()
+        if not info:
+            return {"ok": False, "error": "Nenhuma atualizacao disponivel."}
+
+        def worker():
+            self._update_progress(0, 0)
+            path = download_installer(info["url"], on_progress=self._update_progress)
+            if not path:
+                self._update_progress(-1, -1)
+                return
+            if run_installer(path):
+                # Da um instante para o instalador iniciar e entao encerra o
+                # app para que ele possa sobrescrever os arquivos.
+                self._update_progress(100, 100)
+                time.sleep(1.5)
+                self.quit()
+            else:
+                self._update_progress(-1, -1)
+
+        threading.Thread(target=worker, daemon=True).start()
+        return {"ok": True}
+
+    def open_releases_page(self):
+        from .version import GITHUB_OWNER, GITHUB_REPO
+        info = self._update_info or {}
+        url = info.get("html_url") or (
+            f"https://github.com/{GITHUB_OWNER}/{GITHUB_REPO}/releases/latest"
+        )
+        try:
+            import webbrowser
+            webbrowser.open(url)
+        except Exception:
+            pass
+
+    def _update_progress(self, got, total):
+        if not self._window:
+            return
+        try:
+            self._window.evaluate_js(
+                f"window.camfxUpdateProgress && window.camfxUpdateProgress({got}, {total})"
+            )
+        except Exception:
+            pass
 
     def set_camera(self, pos):
         self.config.camera_index = self._cam_indices[int(pos)]

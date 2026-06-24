@@ -36,6 +36,7 @@ Se você usa o NVIDIA Broadcast só para desfocar o fundo da webcam, conhece os 
 - **Pré-visualização ao vivo** e controles de efeito na janela.
 - **Tema escuro** integrado ao Windows 11.
 - **Início com o Windows** (minimizado) opcional.
+- **Atualização automática:** o app verifica novas versões no GitHub e instala com um clique, direto pela janela.
 
 ## Compatibilidade
 

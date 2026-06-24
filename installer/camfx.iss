@@ -36,6 +36,12 @@ UninstallDisplayIcon={app}\{#AppExe}
 PrivilegesRequired=admin
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
+; Auto-atualizacao: fecha o CamFX em execucao antes de copiar os arquivos e o
+; reabre ao final. AppMutex bate com o mutex de instancia unica do app, para o
+; Inno detectar o CamFX rodando mesmo no modo silencioso.
+CloseApplications=yes
+RestartApplications=yes
+AppMutex=CamFX_SingleInstance_Mutex
 
 [Languages]
 Name: "brazilianportuguese"; MessagesFile: "compiler:Languages\BrazilianPortuguese.isl"
@@ -67,6 +73,8 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; \
 
 [Run]
 Filename: "{app}\{#AppExe}"; Description: "Abrir o CamFX agora"; Flags: nowait postinstall skipifsilent
+; Em atualizacao silenciosa (auto-update do app), reabre o CamFX minimizado.
+Filename: "{app}\{#AppExe}"; Parameters: "--minimized"; Flags: nowait runasoriginaluser; Check: WizardSilent
 
 [UninstallRun]
 ; Encerra o host antes de desinstalar para liberar o DLL/arquivos.

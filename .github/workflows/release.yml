@@ -45,6 +45,13 @@ jobs:
           "tag=v$next"    | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           Write-Host "Proxima versao: $next (anterior: $last)"
 
+      - name: Injetar versao no app
+        shell: pwsh
+        run: |
+          $v = "${{ steps.ver.outputs.version }}"
+          "__version__ = `"$v`"" | Out-File -FilePath camfx\_version.py -Encoding utf8
+          Write-Host "camfx/_version.py -> $v"
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:

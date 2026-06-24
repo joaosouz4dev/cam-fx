@@ -45,6 +45,12 @@ async function init() {
   applyDisabled("blur-sub", state.blur_enabled);
   applyDisabled("framing-sub", state.framing_enabled);
 
+  // versao no rodape
+  try {
+    const v = await api().get_app_version();
+    if (v) document.getElementById("app-version").textContent = "CamFX " + v;
+  } catch (e) {}
+
   pollStatus();
 }
 
@@ -122,6 +128,91 @@ async function pollStatus() {
     if (s) document.getElementById("status-main").textContent = s;
   } catch (e) {}
   setTimeout(pollStatus, 1000);
+}
+
+// ---- atualizacao ----
+let updateInfo = null;
+let updating = false;
+
+// Chamado pelo Python quando uma versao nova e encontrada.
+window.camfxUpdateAvailable = function (version, notes) {
+  updateInfo = { version: version, notes: notes };
+  document.getElementById("update-main").textContent =
+    "Nova versão disponível: CamFX " + version;
+  document.getElementById("update-sub").textContent =
+    "Clique em Atualizar para baixar e instalar.";
+  resetUpdateButtons();
+  document.getElementById("update-banner").classList.add("show");
+};
+
+// Progresso do download (got/total em bytes; -1,-1 = erro; 100,100 = pronto).
+window.camfxUpdateProgress = function (got, total) {
+  const sub = document.getElementById("update-sub");
+  if (got === -1) {
+    updating = false;
+    resetUpdateButtons();
+    sub.textContent = "Falha ao baixar. Tente novamente.";
+    return;
+  }
+  if (got >= 100 && total === 100) {
+    sub.textContent = "Concluído. Iniciando o instalador...";
+    return;
+  }
+  if (total > 0) {
+    const p = Math.round((got / total) * 100);
+    sub.textContent = "Baixando... " + p + "%";
+  } else {
+    sub.textContent = "Baixando...";
+  }
+};
+
+function resetUpdateButtons() {
+  const go = document.getElementById("update-go");
+  const later = document.getElementById("update-later");
+  go.disabled = false; later.disabled = false;
+  go.textContent = "Atualizar";
+}
+
+async function updateNow() {
+  if (updating) return;
+  updating = true;
+  document.getElementById("update-go").disabled = true;
+  document.getElementById("update-later").disabled = true;
+  document.getElementById("update-go").textContent = "Baixando...";
+  document.getElementById("update-sub").textContent = "Iniciando download...";
+  try {
+    const r = await api().download_and_install_update();
+    if (r && r.ok === false) {
+      updating = false;
+      resetUpdateButtons();
+      document.getElementById("update-sub").textContent =
+        r.error || "Não foi possível atualizar.";
+    }
+  } catch (e) {
+    updating = false;
+    resetUpdateButtons();
+  }
+}
+
+function updateLater() {
+  document.getElementById("update-banner").classList.remove("show");
+}
+
+async function checkUpdate() {
+  const link = document.getElementById("check-update");
+  link.textContent = "Verificando...";
+  try {
+    const info = await api().check_update_now();
+    if (info && info.version) {
+      window.camfxUpdateAvailable(info.version, info.notes || "");
+      link.textContent = "Verificar atualizações";
+    } else {
+      link.textContent = "Você está na versão mais recente";
+      setTimeout(() => { link.textContent = "Verificar atualizações"; }, 4000);
+    }
+  } catch (e) {
+    link.textContent = "Verificar atualizações";
+  }
 }
 
 window.addEventListener("pywebviewready", init);

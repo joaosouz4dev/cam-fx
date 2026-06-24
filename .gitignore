@@ -8,6 +8,9 @@ dist/
 *.tflite
 debug*.log
 
+# Versao injetada pelo CI no build (gerada, nao versionada)
+camfx/_version.py
+
 # Artefatos de build do driver C++ (codigo-fonte e versionado, binarios nao)
 driver/baseclasses/
 driver/*.obj

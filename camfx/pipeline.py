@@ -32,6 +32,32 @@ _CAPTURE_BACKENDS = (
 )
 
 
+def _fix_blue_cast(frame):
+    """Corrige o tom azulado do DirectShow via gray-world white balance.
+
+    O DirectShow entrega a imagem "crua" (B/R ~1.10, azulada). Equalizamos as
+    medias dos canais para a media global (gray-world), o que neutraliza o
+    excesso de azul aproximando da cor que o MSMF/Meet mostram. Barato (~1ms).
+    """
+    try:
+        import numpy as np
+        b, g, r = cv2.split(frame)
+        mb, mg, mr = float(b.mean()), float(g.mean()), float(r.mean())
+        mgray = (mb + mg + mr) / 3.0
+        if mb > 1 and mr > 1 and mg > 1:
+            b = cv2.multiply(b, mgray / mb)
+            g = cv2.multiply(g, mgray / mg)
+            r = cv2.multiply(r, mgray / mr)
+            frame = cv2.merge([
+                np.clip(b, 0, 255).astype("uint8"),
+                np.clip(g, 0, 255).astype("uint8"),
+                np.clip(r, 0, 255).astype("uint8"),
+            ])
+    except Exception:
+        pass
+    return frame
+
+
 def open_camera(index: int, width: int | None = None, height: int | None = None,
                 fps: int | None = None):
     """Abre a camera, preferindo MSMF (Media Foundation).
@@ -47,23 +73,28 @@ def open_camera(index: int, width: int | None = None, height: int | None = None,
     from .log import log
 
     # 1) MSMF: cores corretas (igual a webcam direta). Lento para abrir (~10s).
-    try:
-        log(f"open_camera: tentando MSMF no indice {index}")
-        cap = cv2.VideoCapture(index, cv2.CAP_MSMF)
-        if cap.isOpened():
-            if width:
-                cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
-            if height:
-                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
-            if fps:
-                cap.set(cv2.CAP_PROP_FPS, fps)
-            ok, _ = cap.read()
-            if ok:
-                log("open_camera: MSMF OK")
-                return cap, "MSMF"
-        cap.release()
-    except Exception as exc:
-        log(f"open_camera: MSMF EXCECAO: {exc!r}")
+    # Tentamos algumas vezes: se a camera acabou de ser liberada por outra
+    # instancia/restart, o primeiro open pode falhar. Insistir no MSMF evita
+    # cair no DirectShow (que entrega a imagem azulada).
+    for attempt in range(3):
+        try:
+            log(f"open_camera: tentando MSMF no indice {index} (tentativa {attempt + 1})")
+            cap = cv2.VideoCapture(index, cv2.CAP_MSMF)
+            if cap.isOpened():
+                if width:
+                    cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+                if height:
+                    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+                if fps:
+                    cap.set(cv2.CAP_PROP_FPS, fps)
+                ok, _ = cap.read()
+                if ok:
+                    log("open_camera: MSMF OK")
+                    return cap, "MSMF"
+            cap.release()
+        except Exception as exc:
+            log(f"open_camera: MSMF EXCECAO: {exc!r}")
+        time.sleep(1.0)  # da tempo da camera ser liberada antes de re-tentar
 
     # 2) Fallback: DirectShow via pygrabber (rapido, mas cor pode diferir).
     try:
@@ -214,10 +245,33 @@ class Pipeline:
             self._thread = None
 
     def restart(self) -> None:
-        was = self.running
-        self.stop()
-        if was:
-            self.start()
+        # Serializa restarts: varias mudancas seguidas na UI (ligar swap, trocar
+        # device, etc.) chamavam restart em paralelo, abrindo a camera enquanto a
+        # anterior ainda fechava. Isso fazia o MSMF falhar e cair no DirectShow
+        # (cor azulada) e podia travar o app. Com o lock, um restart espera o
+        # outro terminar.
+        if not hasattr(self, "_restart_lock"):
+            self._restart_lock = threading.Lock()
+        with self._restart_lock:
+            was = self.running
+            self.stop()
+            if was:
+                self.start()
+
+    def update_source_face(self) -> None:
+        """Recarrega apenas a foto-fonte do face swap, SEM reiniciar o pipeline.
+
+        Trocar a foto nao exige reabrir a camera nem recarregar o insightface;
+        so atualizar o SourceFace. Evita o restart pesado (e a cor azul que vinha
+        do fallback DirectShow quando a camera ficava presa no restart)."""
+        if not (self.running and self._swapper and self._source_face):
+            return
+        try:
+            with self._lock:
+                self._source_face.load(self.config.source_face_path, self._swapper)
+        except Exception as exc:
+            from .log import log as _log
+            _log(f"faceswap: update_source_face falhou: {exc!r}")
 
     def _status(self, msg: str) -> None:
         if self.on_status:
@@ -314,6 +368,9 @@ class Pipeline:
 
         self._status("Abrindo camera... (pode levar alguns segundos)")
         cap, _backend = open_camera(cfg.camera_index, cfg.width, cfg.height, cfg.fps)
+        # O DirectShow (fallback) entrega a imagem azulada; sinalizamos para
+        # corrigir a cor no processamento. O MSMF ja vem com a cor correta.
+        self._needs_color_fix = (_backend == "DirectShow")
 
         if cap is None:
             self._error(
@@ -434,6 +491,10 @@ class Pipeline:
 
                 if frame.shape[1] != cfg.width or frame.shape[0] != cfg.height:
                     frame = cv2.resize(frame, (cfg.width, cfg.height))
+
+                # Corrige a cor azulada quando caimos no DirectShow (fallback).
+                if getattr(self, "_needs_color_fix", False):
+                    frame = _fix_blue_cast(frame)
 
                 ts_ms = int((time.perf_counter() - start) * 1000)
 

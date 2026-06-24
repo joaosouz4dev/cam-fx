@@ -82,15 +82,21 @@ class InsightFaceSwapper(FaceSwapperBackend):
         # det_size menor = deteccao mais rapida; 320 e um bom equilibrio.
         self._app.prepare(ctx_id=0, det_size=(320, 320))
 
-        # inswapper: tenta o provider escolhido (GPU em auto/gpu), com fallback
-        # para CPU se a sessao GPU falhar ao rodar.
-        log(f"faceswap: inswapper providers={providers}")
+        # inswapper: por ESTABILIDADE roda em CPU. O DirectML do inswapper
+        # funciona isolado (54ms), mas no app as sessoes DirectML sao criadas na
+        # thread STA do pipeline e usadas na thread do worker, o que crasha o
+        # processo (apartment COM incompativel). Em CPU (~1.1s/swap) e estavel; o
+        # worker e assincrono, entao o FPS de saida nao cai (so o rosto trocado
+        # atualiza mais devagar). Otimizar p/ GPU exige criar/usar a sessao na
+        # MESMA thread (refator futuro). Forcamos CPU aqui.
+        swap_providers = ["CPUExecutionProvider"]
+        log(f"faceswap: inswapper providers={swap_providers} (CPU p/ estabilidade)")
         self._swapper = get_model(str(paths["inswapper_128.onnx"]),
-                                  providers=providers)
+                                  providers=swap_providers)
 
         if self._want_enhance:
             from .enhancer import FaceEnhancer
-            enh = FaceEnhancer(providers)
+            enh = FaceEnhancer(swap_providers)  # CPU, mesma razao do inswapper
             self._enhancer = enh if enh.ready else None
         log("faceswap: insightface pronto")
 

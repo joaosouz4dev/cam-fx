@@ -63,10 +63,12 @@ class FaceSwapWorker:
             return self._result
 
     def _loop(self):
-        # ONNX Runtime / insightface usam COM em alguns backends; inicializa.
+        # ONNX Runtime DirectML usa COM em modo MULTI-THREADED (MTA). Inicializar
+        # esta thread como STA (CoInitialize) pode crashar o processo ao rodar a
+        # sessao DirectML. COINIT_MULTITHREADED = 0x0.
         try:
             import ctypes
-            ctypes.windll.ole32.CoInitialize(None)
+            ctypes.windll.ole32.CoInitializeEx(None, 0x0)  # MTA
         except Exception:
             pass
 

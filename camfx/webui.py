@@ -218,9 +218,16 @@ class Api:
             return {"error": "Nao foi possivel ler essa imagem."}
         self.config.source_face_path = path
         self.config.save()
-        # Reaplica no pipeline se estiver rodando (recarrega o rosto-fonte).
+        # Reaplica no pipeline se estiver rodando. Se o swap ja esta carregado,
+        # so troca a foto (leve, sem restart). Se ainda nao ha swapper (ex.: foi
+        # ligado sem foto), ai sim precisa de um restart para carrega-lo.
         if self.pipeline.running:
-            threading.Thread(target=self.pipeline.restart, daemon=True).start()
+            if getattr(self.pipeline, "_swapper", None):
+                threading.Thread(
+                    target=self.pipeline.update_source_face, daemon=True).start()
+            else:
+                threading.Thread(
+                    target=self.pipeline.restart, daemon=True).start()
         return {"thumb": thumb}
 
     def get_source_face_thumb(self):

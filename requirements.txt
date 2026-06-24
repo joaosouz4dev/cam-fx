@@ -16,3 +16,26 @@ pystray==0.19.5
 Pillow==10.4.0
 # Enumeracao de cameras por nome (DirectShow) para filtrar a camera virtual
 pygrabber==0.2
+# Troca de rosto (face swap): deteccao/alinhamento/recognition (buffalo_l) +
+# inswapper. ATENCAO: o modelo inswapper_128 e licenciado apenas para pesquisa/
+# uso nao comercial (ver camfx/terms.py). Mantido so no branch feat/face-swap.
+# insightface puxa onnxruntime como dep; instalamos com --no-deps no build do
+# branch para nao conflitar com onnxruntime-directml, e adicionamos as libs
+# transitivas necessarias explicitamente.
+insightface==0.7.3
+onnx==1.16.2
+scikit-image==0.24.0
+# deps transitivas do insightface (instaladas explicitamente por causa do
+# --no-deps). albumentations fixado em 1.4.x: a 2.x exige numpy>=2, que quebra
+# o mediapipe (numpy<2). O detector buffalo_l roda em CPU (DirectML quebra o
+# det_10g); so o inswapper usa GPU.
+requests
+easydict
+prettytable
+tqdm
+scikit-learn
+lazy_loader
+networkx
+tifffile
+imageio
+albumentations==1.4.3

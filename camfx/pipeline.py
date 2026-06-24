@@ -182,6 +182,9 @@ class Pipeline:
         self._lock = threading.Lock()
         self._blur: BackgroundBlur | None = None
         self._framing: AutoFraming | None = None
+        self._swapper = None        # FaceSwapperBackend | None
+        self._swap_worker = None    # FaceSwapWorker | None
+        self._source_face = None    # SourceFace | None
         self._fps_actual = 0.0
         self.on_error = None  # callback(str) opcional
         self.on_status = None  # callback(str) opcional
@@ -223,6 +226,71 @@ class Pipeline:
     def _error(self, msg: str) -> None:
         if self.on_error:
             self.on_error(msg)
+
+    def _setup_faceswap(self, cfg) -> None:
+        """Carrega o backend de face swap se habilitado e permitido.
+
+        Tudo aqui e tolerante a falha: qualquer problema (modelos, termos, foto)
+        apenas desativa o swap e segue o pipeline normal.
+        """
+        self._swapper = None
+        self._swap_worker = None
+        self._source_face = None
+        if not getattr(cfg, "faceswap_enabled", False):
+            return
+        try:
+            from . import terms
+            if terms.needs_acceptance(cfg):
+                from .log import log as _log
+                _log("faceswap: termos nao aceitos, swap desativado")
+                return
+            if not cfg.source_face_path:
+                self._status("Escolha uma foto de rosto para a troca.")
+                return
+            self._status("Preparando troca de rosto... (pode baixar modelos)")
+            from .faceswap import load_swapper
+            from .faceswap.source_face import SourceFace
+            from .faceswap.worker import FaceSwapWorker
+
+            self._swapper = load_swapper(
+                cfg.faceswap_backend, cfg.compute_device,
+                enhance=getattr(cfg, "faceswap_enhance", False),
+            )
+            self._source_face = SourceFace()
+            if not self._source_face.load(cfg.source_face_path, self._swapper):
+                self._error("Nenhum rosto encontrado na foto escolhida.")
+                self._swapper = None
+                self._source_face = None
+                return
+            self._swap_worker = FaceSwapWorker(
+                self._swapper, self._source_face,
+                detect_every=getattr(cfg, "faceswap_detect_every", 3),
+            )
+            self._swap_worker.start()
+            from .log import log as _log
+            _log("faceswap: worker iniciado")
+        except Exception as exc:
+            from .log import log as _log
+            _log(f"faceswap: setup falhou: {exc!r}")
+            self._error(f"Troca de rosto indisponivel: {exc}")
+            self._swapper = None
+            self._swap_worker = None
+            self._source_face = None
+
+    def _teardown_faceswap(self) -> None:
+        if self._swap_worker:
+            try:
+                self._swap_worker.stop()
+            except Exception:
+                pass
+            self._swap_worker = None
+        if self._swapper:
+            try:
+                self._swapper.close()
+            except Exception:
+                pass
+            self._swapper = None
+        self._source_face = None
 
     def _loop(self) -> None:
         cfg = self.config
@@ -285,6 +353,11 @@ class Pipeline:
             self._running.clear()
             return
 
+        # Face swap (opcional, pesado): so carrega se habilitado, com termos
+        # aceitos e uma foto-fonte valida. Falha aqui nao derruba o pipeline -
+        # apenas segue sem swap.
+        self._setup_faceswap(cfg)
+
         try:
             with CamFXVirtualCamera(fps=cfg.fps) as cam:
                 self._status(f"Camera virtual ativa: {cam.device}")
@@ -296,6 +369,8 @@ class Pipeline:
             )
         finally:
             cap.release()
+            # Para o worker de face swap antes de fechar os modelos.
+            self._teardown_faceswap()
             # Fecha os modelos sob o mesmo lock do processamento, para nunca
             # destruir o segmenter/detector enquanto um frame esta em process()
             # (evita o erro 'Task runner is currently not running').
@@ -370,6 +445,15 @@ class Pipeline:
                                 zoom=cfg.framing_zoom,
                                 smoothing=cfg.framing_smoothing,
                             )
+                        # Face swap: roda numa thread propria (worker) para nao
+                        # travar o FPS. Submetemos o frame atual e usamos o ultimo
+                        # resultado disponivel; se ainda nao ha resultado fresco,
+                        # seguimos com o frame nao-trocado.
+                        if cfg.faceswap_enabled and self._swap_worker:
+                            self._swap_worker.submit(frame)
+                            swapped = self._swap_worker.latest_result()
+                            if swapped is not None:
+                                frame = swapped
                         if cfg.blur_enabled and self._blur:
                             frame = self._blur.process(
                                 frame, ts_ms + 1,

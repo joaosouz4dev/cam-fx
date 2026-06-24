@@ -36,11 +36,15 @@ UninstallDisplayIcon={app}\{#AppExe}
 PrivilegesRequired=admin
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
-; Auto-atualizacao: fecha o CamFX em execucao antes de copiar os arquivos e o
-; reabre ao final. AppMutex bate com o mutex de instancia unica do app, para o
-; Inno detectar o CamFX rodando mesmo no modo silencioso.
+; Auto-atualizacao: fecha o CamFX em execucao antes de copiar os arquivos.
+; AppMutex bate com o mutex de instancia unica do app, para o Inno detectar o
+; CamFX rodando mesmo no modo silencioso e fecha-lo.
+; RestartApplications=no de proposito: o Restart Manager do Windows tentaria
+; reabrir o app durante a copia (cedo demais), causando duas instancias e o
+; erro "Failed to load Python DLL". Quem reabre o app, uma unica vez e so no
+; fim, e a entrada [Run] abaixo.
 CloseApplications=yes
-RestartApplications=yes
+RestartApplications=no
 AppMutex=CamFX_SingleInstance_Mutex
 
 [Languages]
@@ -51,9 +55,12 @@ Name: "desktopicon"; Description: "Criar atalho na area de trabalho"; GroupDescr
 Name: "startup"; Description: "Iniciar o CamFX com o Windows (minimizado)"; GroupDescription: "Inicializacao:"; Flags: unchecked
 
 [Files]
-Source: "..\dist\CamFX.exe";              DestDir: "{app}"; Flags: ignoreversion
-Source: "..\dist\VCamSampleSource.dll";   DestDir: "{app}"; Flags: ignoreversion regserver 64bit
-Source: "..\dist\camfx_vcam.exe";         DestDir: "{app}"; Flags: ignoreversion
+; Bundle onedir do PyInstaller: copia a pasta dist\CamFX inteira (exe + DLLs +
+; dados + _internal) para {app}, recursivamente. O DLL da camera virtual e
+; registrado via regserver; o helper acompanha. Todos vem de dist\CamFX porque
+; o build.py (onedir) coloca o exe e os componentes la dentro.
+Source: "..\dist\CamFX\VCamSampleSource.dll"; DestDir: "{app}"; Flags: ignoreversion regserver 64bit
+Source: "..\dist\CamFX\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "VCamSampleSource.dll"
 
 [Dirs]
 ; Pasta de dados compartilhada (frame.bin) acessivel a todas as sessoes/contas,

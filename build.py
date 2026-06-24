@@ -40,7 +40,13 @@ def main() -> int:
         sys.executable, "-m", "PyInstaller",
         "--noconfirm",
         "--clean",
-        "--onefile",
+        # --onedir (NAO --onefile): no modo onefile o exe extrai o Python e as
+        # DLLs para uma pasta temporaria %TEMP%\_MEIxxxx a cada execucao e a
+        # apaga ao sair. Durante a auto-atualizacao (fecha e reabre o app) isso
+        # causava "Failed to load Python DLL" porque a pasta _MEI da instancia
+        # antiga era removida enquanto a nova ainda precisava dela. Com --onedir
+        # os arquivos ficam soltos na pasta de instalacao, sem extracao temporaria.
+        "--onedir",
         "--windowed",          # sem console
         "--name", "CamFX",
         "--icon", str(Path("assets") / "icon.ico"),  # icone do .exe
@@ -64,10 +70,13 @@ def main() -> int:
     if result.returncode != 0:
         return result.returncode
 
-    out = Path("dist") / ("CamFX.exe" if os.name == "nt" else "CamFX")
+    # --onedir gera dist/CamFX/ com o exe e todas as DLLs/dados soltos.
+    app_dir = Path("dist") / "CamFX"
+    out = app_dir / ("CamFX.exe" if os.name == "nt" else "CamFX")
     print(f"\nApp: {out.resolve()}")
 
-    # Copia o driver MF e o helper para dist/, onde o instalador os pega.
+    # Copia o driver MF e o helper para dentro da pasta do app, onde o
+    # instalador os pega (junto do exe e do restante do bundle onedir).
     components = [
         Path("mfref") / "VCamSampleSource" / "x64" / "Release" / "VCamSampleSource.dll",
         Path("mfref") / "VCamSample" / "camfx_vcam.exe",
@@ -76,8 +85,8 @@ def main() -> int:
 
     for comp in components:
         if comp.exists():
-            shutil.copy2(comp, Path("dist") / comp.name)
-            print(f"Componente: dist/{comp.name}")
+            shutil.copy2(comp, app_dir / comp.name)
+            print(f"Componente: {app_dir}/{comp.name}")
         else:
             print(f"AVISO: componente nao encontrado: {comp} "
                   "(compile o driver MF e o helper antes do instalador).")

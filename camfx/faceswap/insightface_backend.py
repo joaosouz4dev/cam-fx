@@ -14,6 +14,7 @@ Estrategia de performance embutida:
 
 from __future__ import annotations
 
+import os
 from typing import Any, Optional
 
 import numpy as np
@@ -63,9 +64,13 @@ def _providers_for(device: str) -> list[str]:
 
 
 class InsightFaceSwapper(FaceSwapperBackend):
-    def __init__(self, device: str = "auto", enhance: bool = False):
+    def __init__(self, device: str = "auto", enhance: bool = False,
+                 swap_model_path: str | None = None,
+                 enhance_model_path: str | None = None):
         self._device = device
         self._want_enhance = enhance
+        self._swap_model_path = swap_model_path  # .onnx do swapper selecionado
+        self._enhance_model_path = enhance_model_path  # .onnx do enhancer
         self._app = None          # FaceAnalysis (detector + recognition)
         self._swapper = None      # INSwapper
         self._enhancer = None     # FaceEnhancer | None
@@ -111,12 +116,18 @@ class InsightFaceSwapper(FaceSwapperBackend):
 
         self._app = FaceAnalysis(name="buffalo_l", providers=det_providers)
         self._app.prepare(ctx_id=ctx_id, det_size=(320, 320))
-        self._swapper = get_model(str(paths["inswapper_128.onnx"]),
-                                  providers=swap_providers)
+
+        # Swapper: usa o modelo selecionado (catalogo/proprio); cai no inswapper
+        # padrao baixado se nenhum caminho valido foi passado.
+        swap_path = self._swap_model_path
+        if not swap_path or not os.path.exists(swap_path):
+            swap_path = str(paths["inswapper_128.onnx"])
+        log(f"faceswap: swapper={os.path.basename(swap_path)}")
+        self._swapper = get_model(swap_path, providers=swap_providers)
 
         if self._want_enhance:
             from .enhancer import FaceEnhancer
-            enh = FaceEnhancer(swap_providers)
+            enh = FaceEnhancer(swap_providers, model_path=self._enhance_model_path)
             self._enhancer = enh if enh.ready else None
         log("faceswap: insightface pronto")
 

@@ -195,6 +195,100 @@ class Api:
         if self.pipeline.running:
             threading.Thread(target=self.pipeline.restart, daemon=True).start()
 
+    # ---------- seletor de modelos (swapper / enhancer) ----------
+
+    def get_models(self):
+        """Lista os modelos do catalogo (swappers e enhancers) com estado."""
+        from .faceswap import registry
+        def pack(kind):
+            out = []
+            for e in registry.list_models(kind):
+                out.append({
+                    "id": e.id, "name": e.name, "size_mb": e.size_mb,
+                    "license": e.license, "note": e.note,
+                    "downloaded": registry.is_downloaded(e),
+                })
+            return out
+        return {
+            "swappers": pack("swapper"),
+            "enhancers": pack("enhancer"),
+            "swap_model_id": getattr(self.config, "swap_model_id", "inswapper_128"),
+            "enhance_model_id": getattr(self.config, "enhance_model_id", ""),
+            "swap_model_path": getattr(self.config, "swap_model_path", ""),
+            "enhance_model_path": getattr(self.config, "enhance_model_path", ""),
+        }
+
+    def download_model(self, model_id):
+        """Baixa um modelo do catalogo (em thread). Progresso via JS."""
+        from .faceswap import registry
+        entry = next((e for e in registry.CATALOG if e.id == model_id), None)
+        if entry is None:
+            return {"ok": False, "error": "Modelo desconhecido."}
+
+        def worker():
+            def prog(msg):
+                self._push_model_progress(model_id, msg)
+            try:
+                registry.download(entry, progress=prog)
+                self._push_model_progress(model_id, "ok")
+            except Exception as exc:
+                log(f"download_model {model_id}: {exc!r}")
+                self._push_model_progress(model_id, "erro")
+
+        threading.Thread(target=worker, daemon=True).start()
+        return {"ok": True}
+
+    def _push_model_progress(self, model_id, msg):
+        if not self._window:
+            return
+        try:
+            self._window.evaluate_js(
+                f"window.camfxModelProgress && window.camfxModelProgress("
+                f"{json.dumps(model_id)}, {json.dumps(msg)})"
+            )
+        except Exception:
+            pass
+
+    def set_swap_model(self, model_id):
+        self.config.swap_model_id = model_id
+        self.config.save()
+        if self.pipeline.running:
+            threading.Thread(target=self.pipeline.restart, daemon=True).start()
+        return {"ok": True}
+
+    def set_enhance_model(self, model_id):
+        self.config.enhance_model_id = model_id or ""
+        self.config.save()
+        if self.pipeline.running:
+            threading.Thread(target=self.pipeline.restart, daemon=True).start()
+        return {"ok": True}
+
+    def choose_model_file(self, kind):
+        """Escolhe um .onnx proprio do disco para swapper ou enhancer."""
+        try:
+            result = self._window.create_file_dialog(
+                webview.OPEN_DIALOG, allow_multiple=False,
+                file_types=("Modelo ONNX (*.onnx)",),
+            )
+        except Exception as exc:
+            log(f"choose_model_file: dialogo falhou: {exc!r}")
+            return {"error": "Nao foi possivel abrir o seletor."}
+        if not result:
+            return {}
+        path = result[0] if isinstance(result, (list, tuple)) else result
+        from .faceswap import registry
+        if kind == "swapper":
+            self.config.swap_model_id = registry.CUSTOM_ID
+            self.config.swap_model_path = path
+        else:
+            self.config.enhance_model_id = registry.CUSTOM_ID
+            self.config.enhance_model_path = path
+        self.config.save()
+        if self.pipeline.running:
+            threading.Thread(target=self.pipeline.restart, daemon=True).start()
+        import os
+        return {"name": os.path.basename(path)}
+
     def choose_source_face(self):
         """Abre um dialogo para escolher a foto do rosto-fonte.
 

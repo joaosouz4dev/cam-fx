@@ -19,17 +19,23 @@ class FaceEnhancer:
 
     INPUT = 512
 
-    def __init__(self, providers: list[str]):
+    def __init__(self, providers: list[str], model_path: str | None = None):
         self._sess = None
         self._in_name = None
         self._out_name = None
         try:
             import onnxruntime as ort
-            path = ensure_enhancer_model(progress=lambda m: log(f"enhancer: {m}"))
+            # Usa o enhancer selecionado (catalogo/proprio) se houver caminho;
+            # senao cai no GFPGAN padrao baixado sob demanda.
+            import os
+            if model_path and os.path.exists(model_path):
+                path = model_path
+            else:
+                path = str(ensure_enhancer_model(progress=lambda m: log(f"enhancer: {m}")))
             self._sess = ort.InferenceSession(str(path), providers=providers)
             self._in_name = self._sess.get_inputs()[0].name
             self._out_name = self._sess.get_outputs()[0].name
-            log("enhancer: GFPGAN ONNX pronto")
+            log(f"enhancer: pronto ({os.path.basename(str(path))})")
         except Exception as exc:
             log(f"enhancer: indisponivel ({exc!r})")
             self._sess = None

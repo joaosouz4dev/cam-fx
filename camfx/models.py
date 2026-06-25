@@ -80,6 +80,52 @@ def ensure_models(progress=None) -> dict[str, Path]:
     return resolved
 
 
+def enable_cuda_dlls() -> bool:
+    """Coloca as DLLs do CUDA/cuDNN (pacotes pip nvidia-*) no PATH.
+
+    O onnxruntime-gpu so acha o CUDAExecutionProvider se as DLLs do cuDNN/cuBLAS
+    estiverem no PATH (alem de add_dll_directory, por causa de dependencias
+    transitivas como cudnn64_9.dll). Sem isso, cai silenciosamente para CPU.
+    Idempotente; retorna True se encontrou as pastas. Deve rodar ANTES de
+    importar/usar o onnxruntime para CUDA.
+    """
+    import glob
+    found = []
+    for sp in _site_packages_dirs():
+        base = sp / "nvidia"
+        if base.exists():
+            found += glob.glob(str(base / "*" / "bin"))
+    if not found:
+        return False
+    os.environ["PATH"] = os.pathsep.join(found) + os.pathsep + os.environ.get("PATH", "")
+    for d in found:
+        try:
+            os.add_dll_directory(d)
+        except Exception:
+            pass
+    return True
+
+
+def _site_packages_dirs() -> list[Path]:
+    dirs = []
+    try:
+        import site
+        for p in site.getsitepackages():
+            dirs.append(Path(p))
+        u = site.getusersitepackages()
+        if u:
+            dirs.append(Path(u))
+    except Exception:
+        pass
+    # fallback: a pasta do proprio numpy/onnxruntime ja instalado
+    try:
+        import onnxruntime
+        dirs.append(Path(onnxruntime.__file__).resolve().parent.parent)
+    except Exception:
+        pass
+    return dirs
+
+
 def insightface_home() -> Path:
     """Pasta onde o insightface guarda o buffalo_l (detector/recognition).
 

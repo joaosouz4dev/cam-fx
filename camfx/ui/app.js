@@ -59,6 +59,9 @@ async function init() {
     } catch (e) {}
   }
 
+  // modelos (swapper + enhancer)
+  await loadModels();
+
   // versao no rodape
   try {
     const v = await api().get_app_version();
@@ -66,6 +69,104 @@ async function init() {
   } catch (e) {}
 
   pollStatus();
+}
+
+// ---- seletor de modelos ----
+let modelsState = null;
+
+async function loadModels() {
+  try {
+    modelsState = await api().get_models();
+  } catch (e) { return; }
+  fillModelSelect("swap-model", modelsState.swappers, modelsState.swap_model_id, false);
+  fillModelSelect("enhance-model", modelsState.enhancers, modelsState.enhance_model_id, true);
+  refreshModelButtons();
+}
+
+function fillModelSelect(id, list, selected, allowNone) {
+  const sel = document.getElementById(id);
+  sel.innerHTML = "";
+  if (allowNone) {
+    const o = document.createElement("option");
+    o.value = "none"; o.textContent = "Nenhum (sem melhoria)";
+    if (!selected || selected === "none") o.selected = true;
+    sel.appendChild(o);
+  }
+  list.forEach((m) => {
+    const o = document.createElement("option");
+    o.value = m.id;
+    o.textContent = m.name + " · " + m.size_mb + " MB" +
+      (m.downloaded ? "" : " (baixar)") +
+      (m.license === "research" ? " · pesquisa" : "");
+    if (m.id === selected) o.selected = true;
+    sel.appendChild(o);
+  });
+  if (selected === "custom") {
+    const o = document.createElement("option");
+    o.value = "custom"; o.textContent = "Arquivo proprio (.onnx)"; o.selected = true;
+    sel.appendChild(o);
+  }
+}
+
+function modelById(kind, id) {
+  const list = kind === "swapper" ? modelsState.swappers : modelsState.enhancers;
+  return list.find((m) => m.id === id) || null;
+}
+
+function refreshModelButtons() {
+  const sId = document.getElementById("swap-model").value;
+  const eId = document.getElementById("enhance-model").value;
+  const sm = modelById("swapper", sId);
+  const em = modelById("enhancer", eId);
+  document.getElementById("swap-dl").style.display =
+    (sm && !sm.downloaded) ? "flex" : "none";
+  document.getElementById("enhance-dl").style.display =
+    (em && !em.downloaded) ? "flex" : "none";
+}
+
+function onSwapModel() {
+  refreshModelButtons();
+  api().set_swap_model(document.getElementById("swap-model").value);
+}
+function onEnhanceModel() {
+  refreshModelButtons();
+  api().set_enhance_model(document.getElementById("enhance-model").value);
+}
+
+async function downloadModel(kind) {
+  const id = document.getElementById(kind === "swapper" ? "swap-model" : "enhance-model").value;
+  const m = modelById(kind, id);
+  if (!m) return;
+  document.getElementById("model-status").textContent =
+    "Baixando " + m.name + " (" + m.size_mb + " MB)...";
+  await api().download_model(id);
+}
+
+// progresso/conclusao do download (chamado pelo Python)
+window.camfxModelProgress = function (modelId, msg) {
+  const st = document.getElementById("model-status");
+  if (msg === "ok") {
+    st.textContent = "Modelo baixado.";
+    loadModels();
+    setTimeout(() => { st.textContent = ""; }, 4000);
+  } else if (msg === "erro") {
+    st.textContent = "Falha ao baixar. Tente de novo.";
+  } else {
+    st.textContent = msg;
+  }
+};
+
+async function chooseModelFile(kind) {
+  try {
+    const r = await api().choose_model_file(kind);
+    if (r && r.name) {
+      document.getElementById("model-status").textContent =
+        "Usando arquivo: " + r.name;
+      await loadModels();
+    } else if (r && r.error) {
+      document.getElementById("model-status").textContent = r.error;
+    }
+  } catch (e) {}
 }
 
 function pct(v, lo, hi) { return Math.round(((v - lo) / (hi - lo)) * 100) + "%"; }

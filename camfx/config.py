@@ -56,6 +56,12 @@ class Config:
     faceswap_backend: str = "insightface"  # ponto de troca de modelo/licenca
     faceswap_detect_every: int = 3     # detecta o rosto a cada N frames
 
+    # Modelos selecionaveis (catalogo ou arquivo proprio). Ver faceswap/registry.
+    swap_model_id: str = "inswapper_128"   # id do catalogo ou "custom"
+    swap_model_path: str = ""              # .onnx proprio quando id == custom
+    enhance_model_id: str = ""             # "" / "none" desliga; id ou "custom"
+    enhance_model_path: str = ""           # .onnx proprio quando id == custom
+
     # --- Termos de uso (salvaguarda do face swap) ---
     terms_accepted: bool = False
     terms_version: int = 0             # versao dos termos que o usuario aceitou

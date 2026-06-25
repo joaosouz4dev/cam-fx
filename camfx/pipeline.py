@@ -302,13 +302,20 @@ class Pipeline:
                 self._status("Escolha uma foto de rosto para a troca.")
                 return
             self._status("Preparando troca de rosto... (pode baixar modelos)")
-            from .faceswap import load_swapper
+            from .faceswap import load_swapper, registry
             from .faceswap.source_face import SourceFace
             from .faceswap.worker import FaceSwapWorker
 
+            # Modelos selecionados (catalogo/proprio). enhance liga se houver um
+            # enhancer escolhido OU o toggle classico faceswap_enhance.
+            swap_path = registry.resolve_swapper(cfg)
+            enhance_path = registry.resolve_enhancer(cfg)
+            want_enhance = bool(enhance_path) or getattr(cfg, "faceswap_enhance", False)
             self._swapper = load_swapper(
                 cfg.faceswap_backend, cfg.compute_device,
-                enhance=getattr(cfg, "faceswap_enhance", False),
+                enhance=want_enhance,
+                swap_model_path=swap_path,
+                enhance_model_path=enhance_path,
             )
             self._source_face = SourceFace()
             if not self._source_face.load(cfg.source_face_path, self._swapper):

@@ -175,6 +175,7 @@
     align-items:center; justify-content:center; gap:9px; margin-top:12px}
   .btn-sec:hover{border-color:var(--accent)}
   .btn-sec svg{width:16px; height:16px; fill:var(--dim)}
+  .m-status{font-size:12px; color:var(--dim); margin-top:10px; min-height:14px}
   .src-face{display:none; align-items:center; gap:10px; margin-top:12px;
     background:var(--card2); border:1px solid var(--line); border-radius:12px;
     padding:8px 10px}
@@ -314,6 +315,29 @@
           <div id="tg-enhance" class="toggle" onclick="toggleEnhance()"></div>
         </div>
       </div>
+    </div>
+
+    <div class="card" id="models-card">
+      <div class="c-head">
+        <svg viewBox="0 0 24 24"><path d="M12 2l9 5v10l-9 5-9-5V7l9-5zm0 2.2L5 8v8l7 3.8L19 16V8l-7-3.8z"/></svg>
+        <span>Modelos de IA</span>
+      </div>
+
+      <div class="sl-head" style="margin-bottom:6px"><span>Modelo de troca</span></div>
+      <select id="swap-model" onchange="onSwapModel()"></select>
+      <div class="row" style="margin-top:8px; gap:8px">
+        <button class="btn-sec" id="swap-dl" onclick="downloadModel('swapper')" style="display:none">Baixar</button>
+        <button class="btn-sec" onclick="chooseModelFile('swapper')">Usar .onnx do PC</button>
+      </div>
+
+      <div class="sl-head" style="margin:14px 0 6px"><span>Melhoria (enhancer)</span></div>
+      <select id="enhance-model" onchange="onEnhanceModel()"></select>
+      <div class="row" style="margin-top:8px; gap:8px">
+        <button class="btn-sec" id="enhance-dl" onclick="downloadModel('enhancer')" style="display:none">Baixar</button>
+        <button class="btn-sec" onclick="chooseModelFile('enhancer')">Usar .onnx do PC</button>
+      </div>
+
+      <div class="m-status" id="model-status"></div>
     </div>
 
     <div class="card">

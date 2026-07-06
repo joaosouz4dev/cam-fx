@@ -54,7 +54,7 @@ class Config:
     source_face_path: str = ""         # caminho da foto do rosto-fonte
     faceswap_enhance: bool = False     # melhora o rosto trocado (custa FPS)
     faceswap_refine: bool = False      # color transfer + mascaras (custa FPS)
-    faceswap_backend: str = "insightface"  # ponto de troca de modelo/licenca
+    faceswap_backend: str = "dlc"  # "dlc" (motor Deep-Live-Cam) | "insightface"
     faceswap_detect_every: int = 3     # detecta o rosto a cada N frames
 
     # Modelos selecionaveis (catalogo ou arquivo proprio). Ver faceswap/registry.

@@ -22,7 +22,11 @@ def load_swapper(backend: str, device: str = "auto", enhance: bool = False,
     `enhance`: liga a melhoria de rosto, se o backend suportar.
     `swap_model_path`/`enhance_model_path`: .onnx selecionados (catalogo/proprio).
     """
-    name = (backend or "insightface").lower()
+    name = (backend or "dlc").lower()
+    if name == "dlc":
+        # Motor do Deep-Live-Cam (vendorizado) - melhor qualidade e FPS.
+        from .dlc_backend import DLCSwapper
+        return DLCSwapper(device=device)
     if name == "insightface":
         from .insightface_backend import InsightFaceSwapper
         return InsightFaceSwapper(

@@ -13,7 +13,8 @@ from .base import FaceSwapperBackend, SwapResult
 
 def load_swapper(backend: str, device: str = "auto", enhance: bool = False,
                  swap_model_path: str | None = None,
-                 enhance_model_path: str | None = None):
+                 enhance_model_path: str | None = None,
+                 refine: bool = False):
     """Factory: instancia o backend de face swap escolhido.
 
     `backend`: "insightface" (padrao). Novos backends adicionam-se aqui.
@@ -28,6 +29,7 @@ def load_swapper(backend: str, device: str = "auto", enhance: bool = False,
             device=device, enhance=enhance,
             swap_model_path=swap_model_path,
             enhance_model_path=enhance_model_path,
+            refine=refine,
         )
     raise ValueError(f"backend de face swap desconhecido: {backend!r}")
 

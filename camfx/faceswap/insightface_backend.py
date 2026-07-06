@@ -66,9 +66,11 @@ def _providers_for(device: str) -> list[str]:
 class InsightFaceSwapper(FaceSwapperBackend):
     def __init__(self, device: str = "auto", enhance: bool = False,
                  swap_model_path: str | None = None,
-                 enhance_model_path: str | None = None):
+                 enhance_model_path: str | None = None,
+                 refine: bool = False):
         self._device = device
         self._want_enhance = enhance
+        self._refine = refine  # tecnicas extras de qualidade (custa FPS)
         self._swap_model_path = swap_model_path  # .onnx do swapper selecionado
         self._enhance_model_path = enhance_model_path  # .onnx do enhancer
         self._app = None          # FaceAnalysis (detector + recognition)
@@ -154,35 +156,50 @@ class InsightFaceSwapper(FaceSwapperBackend):
         if not faces:
             return SwapResult(frame=frame_bgr, swapped=False)
 
-        from . import blending
-
-        original = frame_bgr
+        # inswapper com paste_back=True ja faz um blend nativo bom e RAPIDO. As
+        # tecnicas extras de qualidade (color transfer + mascaras) sao caras e,
+        # para nao matar o FPS, so entram quando ligadas via faceswap_refine.
         out = frame_bgr
         for face in faces:
-            # 1) swap cru (inswapper cola sua face 128x128 de volta).
-            swapped = self._swapper.get(out, face, source, paste_back=True)
-
-            lm = getattr(face, "landmark_2d_106", None)
-            if lm is None:
-                out = swapped
-            else:
-                # 2) color matching: o rosto trocado herda a iluminacao/tom do
-                #    frame original (evita diferenca de cor).
-                fmask = blending.face_mask(original.shape, lm)
-                if fmask is not None:
-                    swapped = blending.color_transfer_lab(swapped, original)
-                    # 3) blend com mascara facial suavizada (sem borda visivel).
-                    out = blending.blend(original, swapped, fmask)
-                    # 4) mouth mask: restaura a boca original (fala natural).
-                    mmask = blending.mouth_mask(original.shape, lm)
-                    if mmask is not None:
-                        out = blending.blend(out, original, mmask)
-                else:
-                    out = swapped
-
+            out = self._swapper.get(out, face, source, paste_back=True)
+            if self._refine:
+                out = self._apply_refine(frame_bgr, out, face)
             if self._enhancer is not None:
                 out = self._enhance_region(out, face)
         return SwapResult(frame=out, swapped=True)
+
+    def _apply_refine(self, original, swapped, face):
+        """Aplica color transfer + mascaras SO no crop do rosto (rapido)."""
+        try:
+            from . import blending
+            lm = getattr(face, "landmark_2d_106", None)
+            if lm is None:
+                return swapped
+            h, w = original.shape[:2]
+            x1, y1, x2, y2 = [int(v) for v in face.bbox]
+            pad = int((x2 - x1) * 0.3)
+            x1, y1 = max(0, x1 - pad), max(0, y1 - pad)
+            x2, y2 = min(w, x2 + pad), min(h, y2 + pad)
+            if x2 <= x1 or y2 <= y1:
+                return swapped
+            # landmarks relativos ao crop
+            lm_c = lm.copy()
+            lm_c[:, 0] -= x1
+            lm_c[:, 1] -= y1
+            orig_c = original[y1:y2, x1:x2]
+            swap_c = swapped[y1:y2, x1:x2]
+            fmask = blending.face_mask(orig_c.shape, lm_c)
+            if fmask is None:
+                return swapped
+            matched = blending.color_transfer_lab(swap_c, orig_c)
+            res_c = blending.blend(orig_c, matched, fmask)
+            mmask = blending.mouth_mask(orig_c.shape, lm_c)
+            if mmask is not None:
+                res_c = blending.blend(res_c, orig_c, mmask)
+            swapped[y1:y2, x1:x2] = res_c
+            return swapped
+        except Exception:
+            return swapped
 
     def _enhance_region(self, frame, face):
         """Melhora apenas a regiao do rosto (bbox), recompondo no frame."""

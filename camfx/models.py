@@ -91,10 +91,19 @@ def enable_cuda_dlls() -> bool:
     """
     import glob
     found = []
+    # 1) Dev: pacotes pip nvidia-* em site-packages/nvidia/*/bin.
     for sp in _site_packages_dirs():
         base = sp / "nvidia"
         if base.exists():
             found += glob.glob(str(base / "*" / "bin"))
+    # 2) Exe empacotado (PyInstaller): as DLLs coletadas ficam no _MEIPASS e/ou
+    # na pasta do exe. Adiciona qualquer pasta que contenha cudnn/cublas.
+    for root in _bundle_dirs():
+        for dll in ("cudnn64_*.dll", "cublas64_*.dll", "cublasLt64_*.dll"):
+            for hit in glob.glob(str(root / "**" / dll), recursive=True):
+                d = str(Path(hit).parent)
+                if d not in found:
+                    found.append(d)
     if not found:
         return False
     os.environ["PATH"] = os.pathsep.join(found) + os.pathsep + os.environ.get("PATH", "")
@@ -104,6 +113,15 @@ def enable_cuda_dlls() -> bool:
         except Exception:
             pass
     return True
+
+
+def _bundle_dirs() -> list[Path]:
+    dirs = []
+    if hasattr(sys, "_MEIPASS"):
+        dirs.append(Path(sys._MEIPASS))  # type: ignore[attr-defined]
+    if getattr(sys, "frozen", False):
+        dirs.append(Path(sys.executable).resolve().parent)
+    return dirs
 
 
 def _site_packages_dirs() -> list[Path]:

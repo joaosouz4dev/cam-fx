@@ -71,9 +71,24 @@ class DLCSwapper(FaceSwapperBackend):
         from ..vendor.dlc import ensure_engine
         swapper = ensure_engine()
 
+        # O motor deles procura o modelo numa pasta `models` relativa ao proprio
+        # arquivo (que no exe fica vazia). Apontamos o models_dir deles para o
+        # nosso cache e garantimos o inswapper baixado la. Ele usa
+        # inswapper_128_fp16.onnx quando CUDA, senao inswapper_128.onnx.
+        from ..models import models_dir as camfx_models_dir, ensure_faceswap_models
+        mdir = str(camfx_models_dir())
+        swapper.models_dir = mdir
+        provs = _providers(self._device)
+        want_fp16 = "CUDAExecutionProvider" in provs
+        try:
+            ensure_faceswap_models(
+                progress=lambda m: log(f"dlc: {m}"), fp16=want_fp16)
+        except TypeError:
+            ensure_faceswap_models(progress=lambda m: log(f"dlc: {m}"))
+
         # Configura os globals do motor.
         import modules.globals as G
-        G.execution_providers = _providers(self._device)
+        G.execution_providers = provs
         G.many_faces = False
         G.map_faces = False
         G.mouth_mask = bool(mouth_mask)
@@ -89,12 +104,14 @@ class DLCSwapper(FaceSwapperBackend):
         self._get_one_face = get_one_face
         self._swapper = swapper
 
-        # Forca o carregamento do modelo agora (loga o provider).
-        try:
-            sess = swapper.get_face_swapper().session
-            log(f"dlc: swapper provider={sess.get_providers()[0]}")
-        except Exception as exc:
-            log(f"dlc: aviso ao carregar swapper: {exc!r}")
+        # Forca o carregamento do modelo agora. Se falhar, o swap nao vai
+        # funcionar - propaga para o pipeline desativar e logar claramente.
+        model = swapper.get_face_swapper()
+        if model is None:
+            raise RuntimeError(
+                f"motor DLC nao carregou o inswapper (models_dir={mdir}). "
+                "Verifique se o modelo foi baixado.")
+        log(f"dlc: motor pronto, provider={model.session.get_providers()[0]}")
 
     def prepare_source(self, image_bgr: np.ndarray) -> Optional[Any]:
         if self._get_one_face is None:

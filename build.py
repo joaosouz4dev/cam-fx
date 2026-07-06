@@ -73,18 +73,35 @@ def main() -> int:
         for collect in _faceswap_libs:
             if importlib.util.find_spec(collect) is not None:
                 cmd += ["--collect-all", collect]
-        # Motor do Deep-Live-Cam vendorizado: modulos importados dinamicamente
+        # Motor do Deep-Live-Cam vendorizado. Ele e importado dinamicamente
         # (o loader registra o pacote como 'modules' em runtime), entao o
-        # PyInstaller precisa ser instruido a incluir toda a arvore.
+        # PyInstaller NAO ve a dependencia. Precisa de 3 coisas:
+        #  1) a arvore de arquivos .py como DADOS (o loader le os modulos);
+        #  2) --collect-submodules para os bytecodes irem no bundle;
+        #  3) hidden-imports dos modulos-chave.
+        cmd += ["--add-data", f"{Path('camfx') / 'vendor'}{sep}camfx/vendor"]
         cmd += ["--collect-submodules", "camfx.vendor"]
+        for hidden in (
+            "camfx.vendor.dlc",
+            "camfx.vendor.dlc.modules.globals",
+            "camfx.vendor.dlc.modules.face_analyser",
+            "camfx.vendor.dlc.modules.processors.frame.face_swapper",
+            "camfx.vendor.dlc.modules.processors.frame.core",
+            "camfx.vendor.dlc.modules.utilities",
+            "camfx.vendor.dlc.modules.cluster_analysis",
+            "camfx.vendor.dlc.modules.gpu_processing",
+            "camfx.vendor.dlc.modules.typing",
+            "camfx.vendor.dlc.modules.core",
+        ):
+            cmd += ["--hidden-import", hidden]
         # DLLs do CUDA (cuDNN/cuBLAS) dos pacotes pip nvidia-*: sem elas o
-        # CUDAExecutionProvider nao carrega no PC do usuario. Coleta os
-        # binarios de cada pacote nvidia presente.
+        # CUDAExecutionProvider nao carrega no PC do usuario. --collect-all
+        # pega binarios + dados de cada pacote nvidia presente.
         for nv in ("nvidia.cudnn", "nvidia.cublas", "nvidia.cuda_nvrtc",
                    "nvidia.cuda_runtime"):
             if importlib.util.find_spec(nv) is not None:
-                cmd += ["--collect-binaries", nv]
-        print("Incluindo face swap (insightface + motor DLC) no bundle.")
+                cmd += ["--collect-all", nv]
+        print("Incluindo face swap (insightface + motor DLC + CUDA) no bundle.")
 
     for entry in add_data:
         cmd += ["--add-data", entry]

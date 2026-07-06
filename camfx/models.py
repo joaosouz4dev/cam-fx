@@ -38,6 +38,11 @@ INSWAPPER_URL = (
     "https://huggingface.co/ezioruan/inswapper_128.onnx/"
     "resolve/main/inswapper_128.onnx"
 )
+# Versao fp16 (meia precisao) - usada em CUDA pelo motor DLC, mais rapida.
+INSWAPPER_FP16_URL = (
+    "https://huggingface.co/hacksider/deep-live-cam/"
+    "resolve/main/inswapper_128_fp16.onnx"
+)
 # GFPGAN em ONNX (melhora/restaura o rosto trocado), opcional.
 GFPGAN_URL = (
     "https://huggingface.co/facefusion/models/"
@@ -157,15 +162,18 @@ def insightface_home() -> Path:
     return home
 
 
-def ensure_faceswap_models(progress=None) -> dict[str, Path]:
+def ensure_faceswap_models(progress=None, fp16: bool = False) -> dict[str, Path]:
     """Baixa os modelos de troca de rosto sob demanda. Retorna nome -> caminho.
 
-    `progress` pode ser (msg: str) ou (recebidos: int, total: int) - detectamos
-    pela aridade chamando com a forma de bytes apenas no _download.
+    `progress` pode ser (msg: str) ou (recebidos: int, total: int).
+    `fp16=True` tambem garante o inswapper_128_fp16.onnx (motor DLC em CUDA).
     """
     insightface_home()  # garante a env antes de o insightface carregar
+    to_get = dict(_FACESWAP_MODELS)
+    if fp16:
+        to_get["inswapper_128_fp16.onnx"] = INSWAPPER_FP16_URL
     resolved: dict[str, Path] = {}
-    for name, url in _FACESWAP_MODELS.items():
+    for name, url in to_get.items():
         dest = models_dir() / name
         if not dest.exists() or dest.stat().st_size == 0:
             if progress:

@@ -62,15 +62,29 @@ def main() -> int:
         "--collect-all", "webview",
     ]
 
-    # Face swap (branch feat/face-swap): so inclui insightface/skimage se a lib
-    # estiver instalada no ambiente. Assim o build da main (sem face swap)
-    # continua funcionando sem essas dependencias. Os MODELOS (inswapper,
-    # buffalo_l) NAO sao embutidos: baixam sob demanda para o cache do usuario.
+    # Face swap: so inclui as deps se estiverem instaladas (o build sem elas
+    # gera um CamFX sem face swap, mais leve). Os MODELOS (inswapper, buffalo_l,
+    # etc.) NAO sao embutidos: baixam sob demanda para o cache do usuario.
     import importlib.util
-    for mod, collect in (("insightface", "insightface"), ("skimage", "skimage")):
-        if importlib.util.find_spec(mod) is not None:
-            cmd += ["--collect-all", collect]
-            print(f"Incluindo {collect} no bundle (face swap).")
+    _faceswap_libs = ("insightface", "skimage", "tqdm", "sklearn",
+                      "albumentations", "easydict", "prettytable")
+    have_faceswap = importlib.util.find_spec("insightface") is not None
+    if have_faceswap:
+        for collect in _faceswap_libs:
+            if importlib.util.find_spec(collect) is not None:
+                cmd += ["--collect-all", collect]
+        # Motor do Deep-Live-Cam vendorizado: modulos importados dinamicamente
+        # (o loader registra o pacote como 'modules' em runtime), entao o
+        # PyInstaller precisa ser instruido a incluir toda a arvore.
+        cmd += ["--collect-submodules", "camfx.vendor"]
+        # DLLs do CUDA (cuDNN/cuBLAS) dos pacotes pip nvidia-*: sem elas o
+        # CUDAExecutionProvider nao carrega no PC do usuario. Coleta os
+        # binarios de cada pacote nvidia presente.
+        for nv in ("nvidia.cudnn", "nvidia.cublas", "nvidia.cuda_nvrtc",
+                   "nvidia.cuda_runtime"):
+            if importlib.util.find_spec(nv) is not None:
+                cmd += ["--collect-binaries", nv]
+        print("Incluindo face swap (insightface + motor DLC) no bundle.")
 
     for entry in add_data:
         cmd += ["--add-data", entry]

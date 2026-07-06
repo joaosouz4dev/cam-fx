@@ -64,6 +64,19 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
+      - name: Instalar dependencias do face swap (motor DLC)
+        shell: pwsh
+        run: |
+          # Deps do face swap. insightface com --no-deps para nao puxar
+          # onnxruntime/numpy conflitantes; transitivas listadas no arquivo.
+          pip install --no-deps -r requirements-faceswap.txt
+          # onnxruntime-gpu (CUDA 12) no lugar do -directml para o motor DLC.
+          # As DLLs do cuDNN/cuBLAS via pip acompanham o bundle e o
+          # enable_cuda_dlls() as poe no PATH em runtime. Sem GPU NVIDIA, o
+          # onnxruntime-gpu ainda roda em CPU.
+          pip uninstall -y onnxruntime-directml onnxruntime
+          pip install onnxruntime-gpu==1.22.0 "nvidia-cudnn-cu12>=9,<10" nvidia-cublas-cu12
+
       - name: Montar a camera virtual (mfref)
         shell: pwsh
         run: ./setup_driver.ps1

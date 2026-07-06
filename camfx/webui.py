@@ -122,6 +122,8 @@ class Api:
                 if empty_since is None:
                     empty_since = time.monotonic()
                 elif time.monotonic() - empty_since >= OFF_DELAY:
+                    log(f"demand: parando pipeline (consumers={consumers} "
+                        f"preview_forced={self._preview_forced})")
                     threading.Thread(target=self.pipeline.stop, daemon=True).start()
                     empty_since = None
             self._demand_stop.wait(1.0)

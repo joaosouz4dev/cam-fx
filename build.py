@@ -67,7 +67,11 @@ def main() -> int:
     # etc.) NAO sao embutidos: baixam sob demanda para o cache do usuario.
     import importlib.util
     _faceswap_libs = ("insightface", "skimage", "tqdm", "sklearn",
-                      "albumentations", "easydict", "prettytable")
+                      "albumentations", "easydict", "prettytable",
+                      # deps de rede que o insightface usa para baixar modelos;
+                      # sem elas o exe quebra com ModuleNotFoundError urllib3.
+                      "requests", "urllib3", "charset_normalizer", "idna",
+                      "certifi")
     have_faceswap = importlib.util.find_spec("insightface") is not None
     if have_faceswap:
         for collect in _faceswap_libs:

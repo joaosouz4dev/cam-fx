@@ -145,16 +145,26 @@ class BridgeRunner:
             log(f"bridge: falha ao preparar motor: {exc!r}\n{traceback.format_exc()}")
             return
 
-        # Camera via pygrabber (a C505e nao abre por cv2.VideoCapture).
-        try:
-            from ..capture import DirectShowCapture
-            cap = DirectShowCapture(self._camera_index)
-            if hasattr(cap, "wait_first_frame") and not cap.wait_first_frame(timeout=15.0):
-                log("bridge: camera nao entregou frame")
-                cap.release()
+        # Camera via pygrabber (a C505e nao abre por cv2.VideoCapture). Se o
+        # pipeline _loop acabou de liberar a camera, o 1o open pode falhar;
+        # tenta algumas vezes antes de desistir.
+        from ..capture import DirectShowCapture
+        cap = None
+        for attempt in range(4):
+            if self._stop.is_set():
                 return
-        except Exception as exc:
-            log(f"bridge: falha ao abrir camera: {exc!r}")
+            if attempt > 0:
+                time.sleep(1.5)  # da tempo da camera liberar entre tentativas
+            try:
+                c = DirectShowCapture(self._camera_index)
+                if not hasattr(c, "wait_first_frame") or c.wait_first_frame(timeout=8.0):
+                    cap = c
+                    break
+                c.release()
+            except Exception as exc:
+                log(f"bridge: tentativa {attempt + 1} de abrir camera falhou: {exc!r}")
+        if cap is None:
+            log("bridge: camera nao entregou frame (desistindo)")
             return
 
         from ..virtualcam import CamFXVirtualCamera

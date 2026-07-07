@@ -58,6 +58,28 @@ def _fix_blue_cast(frame):
     return frame
 
 
+def _backend_cache_path():
+    from .config import config_dir
+    return config_dir() / "camera_backend.txt"
+
+
+def _cached_backend() -> str | None:
+    try:
+        p = _backend_cache_path()
+        if p.exists():
+            return p.read_text(encoding="utf-8").strip() or None
+    except Exception:
+        pass
+    return None
+
+
+def _cache_backend(name: str) -> None:
+    try:
+        _backend_cache_path().write_text(name, encoding="utf-8")
+    except Exception:
+        pass
+
+
 def open_camera(index: int, width: int | None = None, height: int | None = None,
                 fps: int | None = None):
     """Abre a camera, preferindo MSMF (Media Foundation).
@@ -72,13 +94,18 @@ def open_camera(index: int, width: int | None = None, height: int | None = None,
     """
     from .log import log
 
-    # 1) MSMF: cores corretas (igual a webcam direta). Lento para abrir (~10s).
-    # Tentamos algumas vezes: se a camera acabou de ser liberada por outra
-    # instancia/restart, o primeiro open pode falhar. Insistir no MSMF evita
-    # cair no DirectShow (que entrega a imagem azulada).
-    for attempt in range(3):
+    # Cache: se numa execucao anterior a camera so abriu por DirectShow, pula o
+    # MSMF (que trava/demora nessa webcam) e vai direto ao que funciona. Isso
+    # elimina os ~10-30s perdidos tentando o MSMF. O cache fica em
+    # LOCALAPPDATA/CamFX/camera_backend.txt.
+    prefer_dshow = _cached_backend() == "DirectShow"
+
+    # 1) MSMF: cores corretas. So tenta 1x (nao 3x) e so se nao houver cache
+    # dizendo que e DirectShow - a maioria das falhas de MSMF nesta camera nao
+    # se resolve com retry, so custa tempo.
+    if not prefer_dshow:
         try:
-            log(f"open_camera: tentando MSMF no indice {index} (tentativa {attempt + 1})")
+            log(f"open_camera: tentando MSMF no indice {index}")
             cap = cv2.VideoCapture(index, cv2.CAP_MSMF)
             if cap.isOpened():
                 if width:
@@ -90,20 +117,21 @@ def open_camera(index: int, width: int | None = None, height: int | None = None,
                 ok, _ = cap.read()
                 if ok:
                     log("open_camera: MSMF OK")
+                    _cache_backend("MSMF")
                     return cap, "MSMF"
             cap.release()
         except Exception as exc:
             log(f"open_camera: MSMF EXCECAO: {exc!r}")
-        time.sleep(1.0)  # da tempo da camera ser liberada antes de re-tentar
 
     # 2) Fallback: DirectShow via pygrabber (rapido, mas cor pode diferir).
     try:
         from .capture import DirectShowCapture
 
-        log("open_camera: MSMF falhou, tentando DirectShow")
+        log("open_camera: tentando DirectShow")
         cap = DirectShowCapture(index)
         if cap.wait_first_frame(timeout=12.0):
-            log("open_camera: DirectShow OK (fallback)")
+            log("open_camera: DirectShow OK")
+            _cache_backend("DirectShow")
             return cap, "DirectShow"
         cap.release()
     except Exception as exc:
@@ -247,41 +275,49 @@ class Pipeline:
             return False
         return True
 
+    def _startstop_lock(self):
+        if not hasattr(self, "_ss_lock"):
+            self._ss_lock = threading.Lock()
+        return self._ss_lock
+
     def start(self) -> None:
-        if self.running:
-            return
-        self._running.set()
-        if self._use_bridge():
-            # Modo ponte: o motor DLC roda puro e escreve no frame.bin (sem
-            # framing/blur/cor por cima, que degradavam a qualidade).
-            from .faceswap.bridge_runner import BridgeRunner
-            self._bridge = BridgeRunner(
-                source_path=self.config.source_face_path,
-                camera_index=self.config.camera_index,
-                device=self.config.compute_device,
-                mouth_mask=True,
-                config=self.config,
-            )
-            self._bridge.start()
-            self._status("Troca de rosto ativa (motor Deep-Live-Cam).")
-            return
-        self._thread = threading.Thread(target=self._loop, daemon=True)
-        self._thread.start()
+        # Serializa com stop(): o _loop e o bridge NAO podem coexistir (os dois
+        # abririam a mesma camera e um falharia com "camera nao entregou frame").
+        with self._startstop_lock():
+            if self.running:
+                return
+            self._running.set()
+            if self._use_bridge():
+                # Modo ponte: motor DLC puro escreve no frame.bin. Espera a
+                # camera do _loop (se houve) liberar antes de o bridge abrir.
+                from .faceswap.bridge_runner import BridgeRunner
+                self._bridge = BridgeRunner(
+                    source_path=self.config.source_face_path,
+                    camera_index=self.config.camera_index,
+                    device=self.config.compute_device,
+                    mouth_mask=True,
+                    config=self.config,
+                )
+                self._bridge.start()
+                self._status("Troca de rosto ativa (motor Deep-Live-Cam).")
+                return
+            self._thread = threading.Thread(target=self._loop, daemon=True)
+            self._thread.start()
 
     def stop(self, join_timeout: float = 45) -> None:
-        self._running.clear()
-        if getattr(self, "_bridge", None) is not None:
-            try:
-                self._bridge.stop()
-            except Exception:
-                pass
-            self._bridge = None
-        if self._thread:
-            # Espera a abertura lenta da camera (MSMF) terminar e a thread
-            # encerrar, evitando duas threads _loop concorrentes. No encerramento
-            # do app, use join_timeout pequeno para nao travar o fechamento.
-            self._thread.join(timeout=join_timeout)
-            self._thread = None
+        with self._startstop_lock():
+            self._running.clear()
+            if getattr(self, "_bridge", None) is not None:
+                try:
+                    self._bridge.stop()
+                except Exception:
+                    pass
+                self._bridge = None
+            if self._thread:
+                # Espera a abertura lenta da camera (MSMF) terminar e a thread
+                # encerrar, evitando duas threads _loop concorrentes.
+                self._thread.join(timeout=join_timeout)
+                self._thread = None
 
     def restart(self) -> None:
         # Serializa restarts: varias mudancas seguidas na UI (ligar swap, trocar

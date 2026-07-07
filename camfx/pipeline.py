@@ -58,6 +58,28 @@ def _fix_blue_cast(frame):
     return frame
 
 
+def _backend_cache_path():
+    from .config import config_dir
+    return config_dir() / "camera_backend.txt"
+
+
+def _cached_backend() -> str | None:
+    try:
+        p = _backend_cache_path()
+        if p.exists():
+            return p.read_text(encoding="utf-8").strip() or None
+    except Exception:
+        pass
+    return None
+
+
+def _cache_backend(name: str) -> None:
+    try:
+        _backend_cache_path().write_text(name, encoding="utf-8")
+    except Exception:
+        pass
+
+
 def open_camera(index: int, width: int | None = None, height: int | None = None,
                 fps: int | None = None):
     """Abre a camera, preferindo MSMF (Media Foundation).
@@ -72,13 +94,18 @@ def open_camera(index: int, width: int | None = None, height: int | None = None,
     """
     from .log import log
 
-    # 1) MSMF: cores corretas (igual a webcam direta). Lento para abrir (~10s).
-    # Tentamos algumas vezes: se a camera acabou de ser liberada por outra
-    # instancia/restart, o primeiro open pode falhar. Insistir no MSMF evita
-    # cair no DirectShow (que entrega a imagem azulada).
-    for attempt in range(3):
+    # Cache: se numa execucao anterior a camera so abriu por DirectShow, pula o
+    # MSMF (que trava/demora nessa webcam) e vai direto ao que funciona. Isso
+    # elimina os ~10-30s perdidos tentando o MSMF. O cache fica em
+    # LOCALAPPDATA/CamFX/camera_backend.txt.
+    prefer_dshow = _cached_backend() == "DirectShow"
+
+    # 1) MSMF: cores corretas. So tenta 1x (nao 3x) e so se nao houver cache
+    # dizendo que e DirectShow - a maioria das falhas de MSMF nesta camera nao
+    # se resolve com retry, so custa tempo.
+    if not prefer_dshow:
         try:
-            log(f"open_camera: tentando MSMF no indice {index} (tentativa {attempt + 1})")
+            log(f"open_camera: tentando MSMF no indice {index}")
             cap = cv2.VideoCapture(index, cv2.CAP_MSMF)
             if cap.isOpened():
                 if width:
@@ -90,20 +117,21 @@ def open_camera(index: int, width: int | None = None, height: int | None = None,
                 ok, _ = cap.read()
                 if ok:
                     log("open_camera: MSMF OK")
+                    _cache_backend("MSMF")
                     return cap, "MSMF"
             cap.release()
         except Exception as exc:
             log(f"open_camera: MSMF EXCECAO: {exc!r}")
-        time.sleep(1.0)  # da tempo da camera ser liberada antes de re-tentar
 
     # 2) Fallback: DirectShow via pygrabber (rapido, mas cor pode diferir).
     try:
         from .capture import DirectShowCapture
 
-        log("open_camera: MSMF falhou, tentando DirectShow")
+        log("open_camera: tentando DirectShow")
         cap = DirectShowCapture(index)
         if cap.wait_first_frame(timeout=12.0):
-            log("open_camera: DirectShow OK (fallback)")
+            log("open_camera: DirectShow OK")
+            _cache_backend("DirectShow")
             return cap, "DirectShow"
         cap.release()
     except Exception as exc:

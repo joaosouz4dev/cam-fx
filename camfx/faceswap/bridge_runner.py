@@ -153,6 +153,8 @@ class BridgeRunner:
         for attempt in range(4):
             if self._stop.is_set():
                 return
+            if attempt > 0:
+                time.sleep(1.5)  # da tempo da camera liberar entre tentativas
             try:
                 c = DirectShowCapture(self._camera_index)
                 if not hasattr(c, "wait_first_frame") or c.wait_first_frame(timeout=8.0):
@@ -161,7 +163,6 @@ class BridgeRunner:
                 c.release()
             except Exception as exc:
                 log(f"bridge: tentativa {attempt + 1} de abrir camera falhou: {exc!r}")
-            time.sleep(1.5)  # da tempo da camera liberar
         if cap is None:
             log("bridge: camera nao entregou frame (desistindo)")
             return

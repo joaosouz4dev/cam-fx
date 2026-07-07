@@ -247,41 +247,49 @@ class Pipeline:
             return False
         return True
 
+    def _startstop_lock(self):
+        if not hasattr(self, "_ss_lock"):
+            self._ss_lock = threading.Lock()
+        return self._ss_lock
+
     def start(self) -> None:
-        if self.running:
-            return
-        self._running.set()
-        if self._use_bridge():
-            # Modo ponte: o motor DLC roda puro e escreve no frame.bin (sem
-            # framing/blur/cor por cima, que degradavam a qualidade).
-            from .faceswap.bridge_runner import BridgeRunner
-            self._bridge = BridgeRunner(
-                source_path=self.config.source_face_path,
-                camera_index=self.config.camera_index,
-                device=self.config.compute_device,
-                mouth_mask=True,
-                config=self.config,
-            )
-            self._bridge.start()
-            self._status("Troca de rosto ativa (motor Deep-Live-Cam).")
-            return
-        self._thread = threading.Thread(target=self._loop, daemon=True)
-        self._thread.start()
+        # Serializa com stop(): o _loop e o bridge NAO podem coexistir (os dois
+        # abririam a mesma camera e um falharia com "camera nao entregou frame").
+        with self._startstop_lock():
+            if self.running:
+                return
+            self._running.set()
+            if self._use_bridge():
+                # Modo ponte: motor DLC puro escreve no frame.bin. Espera a
+                # camera do _loop (se houve) liberar antes de o bridge abrir.
+                from .faceswap.bridge_runner import BridgeRunner
+                self._bridge = BridgeRunner(
+                    source_path=self.config.source_face_path,
+                    camera_index=self.config.camera_index,
+                    device=self.config.compute_device,
+                    mouth_mask=True,
+                    config=self.config,
+                )
+                self._bridge.start()
+                self._status("Troca de rosto ativa (motor Deep-Live-Cam).")
+                return
+            self._thread = threading.Thread(target=self._loop, daemon=True)
+            self._thread.start()
 
     def stop(self, join_timeout: float = 45) -> None:
-        self._running.clear()
-        if getattr(self, "_bridge", None) is not None:
-            try:
-                self._bridge.stop()
-            except Exception:
-                pass
-            self._bridge = None
-        if self._thread:
-            # Espera a abertura lenta da camera (MSMF) terminar e a thread
-            # encerrar, evitando duas threads _loop concorrentes. No encerramento
-            # do app, use join_timeout pequeno para nao travar o fechamento.
-            self._thread.join(timeout=join_timeout)
-            self._thread = None
+        with self._startstop_lock():
+            self._running.clear()
+            if getattr(self, "_bridge", None) is not None:
+                try:
+                    self._bridge.stop()
+                except Exception:
+                    pass
+                self._bridge = None
+            if self._thread:
+                # Espera a abertura lenta da camera (MSMF) terminar e a thread
+                # encerrar, evitando duas threads _loop concorrentes.
+                self._thread.join(timeout=join_timeout)
+                self._thread = None
 
     def restart(self) -> None:
         # Serializa restarts: varias mudancas seguidas na UI (ligar swap, trocar

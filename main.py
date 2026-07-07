@@ -15,6 +15,16 @@ os.environ.setdefault("OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS", "0")
 import sys
 import traceback
 
+# CRITICO: poe as DLLs do CUDA (cuDNN/cuBLAS) no PATH ANTES de qualquer import
+# de onnxruntime/insightface. No .exe elas ficam em _internal/nvidia/*/bin e o
+# onnxruntime nao as acha sozinho -> CUDA falha com "cudnn64_9.dll missing" e o
+# face swap trava. Chamar aqui garante o PATH desde o inicio.
+try:
+    from camfx.models import enable_cuda_dlls
+    enable_cuda_dlls()
+except Exception:
+    pass
+
 
 def _crash_path():
     base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")

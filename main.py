@@ -64,7 +64,53 @@ def main():
     webui.run(start_minimized=start_minimized, instance=instance)
 
 
+def _selfcheck() -> int:
+    """Verifica, sem abrir a UI nem a camera, que toda a cadeia do face swap
+    importa dentro do bundle. Usado para validar o empacotamento (o CI/build
+    local roda `CamFX.exe --selfcheck` e confere o resultado). Sai 0 se OK, 1 se
+    algum modulo faltar - foi o que quebrou o instalador (urllib3, joblib...).
+
+    Como o exe e --windowed (sem console), o resultado tambem vai para
+    LOCALAPPDATA/CamFX/selfcheck.txt, alem do stdout/exit code."""
+    def _report(msg: str) -> None:
+        print(msg)
+        try:
+            base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+            d = os.path.join(base, "CamFX")
+            os.makedirs(d, exist_ok=True)
+            with open(os.path.join(d, "selfcheck.txt"), "w", encoding="utf-8") as f:
+                f.write(msg + "\n")
+        except Exception:
+            pass
+
+    try:
+        from camfx.vendor.dlc import ensure_engine
+        ensure_engine()
+        import modules.globals  # noqa: F401
+        from modules.face_analyser import get_one_face  # noqa: F401
+        from modules.processors.frame import face_swapper  # noqa: F401
+        # e as libs de terceiros que quebravam em cascata:
+        import insightface  # noqa: F401
+        from insightface.utils import download  # noqa: F401  (-> requests -> urllib3)
+        import sklearn.base  # noqa: F401  (-> joblib, scipy)
+        import skimage.transform  # noqa: F401
+        import albumentations  # noqa: F401
+        _report("SELFCHECK: OK - cadeia de face swap importa sem modulo faltando")
+        return 0
+    except ModuleNotFoundError as exc:
+        _report(f"SELFCHECK: FALHOU - modulo faltando: {exc}\n{traceback.format_exc()}")
+        return 1
+    except Exception as exc:
+        # erro que nao e "modulo faltando" (ex.: DLL CUDA ausente sem GPU) nao
+        # invalida o empacotamento; reporta como aviso.
+        _report(f"SELFCHECK: aviso (nao-fatal p/ empacotamento): "
+                f"{type(exc).__name__}: {exc}")
+        return 0
+
+
 if __name__ == "__main__":
+    if "--selfcheck" in sys.argv:
+        raise SystemExit(_selfcheck())
     try:
         main()
     except Exception:

@@ -89,6 +89,20 @@ jobs:
         shell: pwsh
         run: python build.py
 
+      - name: Validar o bundle (self-check do face swap)
+        shell: pwsh
+        run: |
+          # Roda o exe empacotado com --selfcheck: importa toda a cadeia do
+          # face swap DENTRO do bundle. Se faltar algum modulo (urllib3, joblib,
+          # scipy... - o que quebrou v0.0.15/16), o exit e 1 e o release NAO sai.
+          # Impede publicar instalador quebrado.
+          $exe = "dist\CamFX\CamFX.exe"
+          & $exe --selfcheck
+          $code = $LASTEXITCODE
+          $result = Get-Content "$env:LOCALAPPDATA\CamFX\selfcheck.txt" -ErrorAction SilentlyContinue
+          Write-Host "selfcheck: $result"
+          if ($code -ne 0) { throw "SELFCHECK FALHOU (modulo faltando no bundle): $result" }
+
       - name: Instalar Inno Setup
         shell: pwsh
         run: choco install innosetup --no-progress -y

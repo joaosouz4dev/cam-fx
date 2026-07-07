@@ -114,11 +114,25 @@ def open_camera(index: int, width: int | None = None, height: int | None = None,
                     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
                 if fps:
                     cap.set(cv2.CAP_PROP_FPS, fps)
-                ok, _ = cap.read()
-                if ok:
+                # Valida o MSMF de verdade: alguns cameras (ex.: C505e) ABREM
+                # e entregam o 1o frame, mas depois travam (0 FPS). Exigir varios
+                # reads seguidos filtra esse caso e cai pro DirectShow, que
+                # funciona nessa camera. NAO cacheamos "MSMF": o cache so serve
+                # de atalho para "DirectShow" (pular o MSMF lento); gravar "MSMF"
+                # so forcava justamente o backend que trava.
+                good = 0
+                for _ in range(8):
+                    ok, _frame = cap.read()
+                    if ok and _frame is not None:
+                        good += 1
+                    else:
+                        break
+                if good >= 5:
                     log("open_camera: MSMF OK")
                     _cache_backend("MSMF")
                     return cap, "MSMF"
+                log(f"open_camera: MSMF instavel ({good}/8 frames), "
+                    "tentando DirectShow")
             cap.release()
         except Exception as exc:
             log(f"open_camera: MSMF EXCECAO: {exc!r}")
@@ -449,6 +463,7 @@ class Pipeline:
 
         self._status("Abrindo camera... (pode levar alguns segundos)")
         cap, _backend = open_camera(cfg.camera_index, cfg.width, cfg.height, cfg.fps)
+        self._backend = _backend
         # Sem correcao de cor: usar a imagem pura da camera (como os outros
         # apps). Medido: a camera crua e neutra (B/R ~1.03), nao azulada; o
         # azul observado antes vinha de um build quebrado, nao da captura.
@@ -551,12 +566,48 @@ class Pipeline:
         last_seq = -1
         from .log import log as _log
 
+        # Recuperacao: alguns cameras (ex.: C505e) ABREM no MSMF e entregam os
+        # primeiros frames, mas depois travam (0 FPS). Se isso acontecer, tenta
+        # UMA vez reabrir por DirectShow (que sustenta frames nessa camera) antes
+        # de desistir. So faz sentido se ainda nao estamos no DirectShow.
+        recovered = False
+
         try:
             while self.running:
                 frame, seq = reader.latest()
                 if frame is None:
                     miss += 1
-                    if miss >= 200 or not reader.alive:
+                    camera_dead = miss >= 200 or not reader.alive
+                    if camera_dead and not recovered \
+                            and getattr(self, "_backend", None) == "MSMF":
+                        recovered = True
+                        _log("camera MSMF travou; reabrindo por DirectShow")
+                        self._status("Recuperando a camera...")
+                        try:
+                            reader.stop()
+                        except Exception:
+                            pass
+                        try:
+                            cap.release()
+                        except Exception:
+                            pass
+                        try:
+                            from .capture import DirectShowCapture
+                            new_cap = DirectShowCapture(cfg.camera_index)
+                            if new_cap.wait_first_frame(timeout=12.0):
+                                cap = new_cap
+                                self._backend = "DirectShow"
+                                _cache_backend("DirectShow")
+                                reader = _ThreadedReader(cap)
+                                reader.start()
+                                last_seq = -1
+                                miss = 0
+                                _log("recuperacao DirectShow OK")
+                                continue
+                            new_cap.release()
+                        except Exception as exc:
+                            _log(f"recuperacao DirectShow falhou: {exc!r}")
+                    if camera_dead:
                         self._error(
                             "Perdi o sinal da camera. Verifique se ela nao foi "
                             "desconectada ou tomada por outro programa."

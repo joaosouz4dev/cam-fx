@@ -81,9 +81,11 @@ class DirectShowCapture:
             pass
 
     def _on_frame(self, frame: np.ndarray) -> None:
-        # pygrabber entrega RGB; convertemos para BGR (padrao do resto do app).
+        # Esta versao do pygrabber ja entrega BGR (o padrao do resto do app).
+        # NAO inverter os canais aqui: inverter troca R<->B e deixa a imagem
+        # azulada (fone vermelho vira roxo/azul). Confirmado medindo o frame.
         with self._lock:
-            self._latest = frame[:, :, ::-1].copy()
+            self._latest = frame.copy()
             self._frame_count += 1
             if self._frame_count >= self._warmup_frames:
                 self._warmed.set()

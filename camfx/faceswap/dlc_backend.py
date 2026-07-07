@@ -50,6 +50,11 @@ class DLCSwapper(FaceSwapperBackend):
         self._source_face = None  # rosto-fonte (Face do insightface)
         self._last_target = None  # ultima deteccao do alvo
         self._closed = False
+        # deteccao assincrona (thread), como a ponte
+        self._det_thread = None
+        self._det_lock = None
+        self._det_latest_frame = None
+        self._det_stop = None
         self._load(mouth_mask, color_correction)
 
     @staticmethod
@@ -119,14 +124,51 @@ class DLCSwapper(FaceSwapperBackend):
         face = self._get_one_face(image_bgr)
         return face  # pode ser None (sem rosto)
 
+    def _ensure_detection_thread(self):
+        """Deteccao assincrona (como a ponte que ficou linda): uma thread roda
+        get_one_face continuamente no frame mais recente; o swap usa o ultimo
+        resultado sem bloquear. E o que deu ~18 FPS na ponte."""
+        if self._det_thread is not None:
+            return
+        import threading
+        self._det_lock = threading.Lock()
+        self._det_latest_frame = None
+        self._det_stop = threading.Event()
+
+        def _loop():
+            import time as _t
+            # onnxruntime/insightface em thread: garante COM em MTA.
+            try:
+                import ctypes
+                ctypes.windll.ole32.CoInitializeEx(None, 0x0)
+            except Exception:
+                pass
+            while not self._det_stop.is_set():
+                with self._det_lock:
+                    f = self._det_latest_frame
+                if f is None:
+                    _t.sleep(0.005)
+                    continue
+                try:
+                    face = self._get_one_face(f)
+                except Exception:
+                    face = None
+                with self._det_lock:
+                    self._last_target = face
+        self._det_thread = threading.Thread(target=_loop, daemon=True)
+        self._det_thread.start()
+
     def swap_frame(self, frame_bgr, source, *, detect: bool = True) -> SwapResult:
         if self._swapper is None or source is None:
             return SwapResult(frame=frame_bgr, swapped=False)
 
-        # Deteccao do rosto-alvo (amortizada: reusa a ultima quando detect=False).
-        if detect or self._last_target is None:
-            self._last_target = self._get_one_face(frame_bgr)
-        target = self._last_target
+        # Publica o frame para a thread de deteccao e usa a ultima deteccao
+        # disponivel (nao bloqueia o loop principal esperando a deteccao).
+        self._ensure_detection_thread()
+        with self._det_lock:
+            self._det_latest_frame = frame_bgr
+            target = self._last_target
+
         if target is None:
             return SwapResult(frame=frame_bgr, swapped=False)
 
@@ -143,5 +185,10 @@ class DLCSwapper(FaceSwapperBackend):
 
     def close(self) -> None:
         self._closed = True
+        if self._det_stop is not None:
+            self._det_stop.set()
+        if self._det_thread is not None:
+            self._det_thread.join(timeout=2)
+            self._det_thread = None
         self._swapper = None
         self._last_target = None

@@ -216,6 +216,7 @@ class Pipeline:
         self._swapper = None        # FaceSwapperBackend | None
         self._source_face = None    # SourceFace | None
         self._swap_frame_no = 0     # contador p/ detectar a cada N frames
+        self._bridge = None         # BridgeRunner (modo ponte) | None
         self._fps_actual = 0.0
         self.on_error = None  # callback(str) opcional
         self.on_status = None  # callback(str) opcional
@@ -226,17 +227,55 @@ class Pipeline:
 
     @property
     def fps(self) -> float:
+        if self._bridge is not None:
+            return self._bridge.fps
         return self._fps_actual
+
+    def _use_bridge(self) -> bool:
+        """Usa o BridgeRunner (motor DLC puro, como a ponte que ficou linda)
+        quando o face swap esta ligado, com foto e termos aceitos."""
+        cfg = self.config
+        if not getattr(cfg, "faceswap_enabled", False):
+            return False
+        if not getattr(cfg, "source_face_path", ""):
+            return False
+        try:
+            from . import terms
+            if terms.needs_acceptance(cfg):
+                return False
+        except Exception:
+            return False
+        return True
 
     def start(self) -> None:
         if self.running:
             return
         self._running.set()
+        if self._use_bridge():
+            # Modo ponte: o motor DLC roda puro e escreve no frame.bin (sem
+            # framing/blur/cor por cima, que degradavam a qualidade).
+            from .faceswap.bridge_runner import BridgeRunner
+            self._bridge = BridgeRunner(
+                source_path=self.config.source_face_path,
+                camera_index=self.config.camera_index,
+                device=self.config.compute_device,
+                mouth_mask=True,
+                config=self.config,
+            )
+            self._bridge.start()
+            self._status("Troca de rosto ativa (motor Deep-Live-Cam).")
+            return
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
 
     def stop(self, join_timeout: float = 45) -> None:
         self._running.clear()
+        if getattr(self, "_bridge", None) is not None:
+            try:
+                self._bridge.stop()
+            except Exception:
+                pass
+            self._bridge = None
         if self._thread:
             # Espera a abertura lenta da camera (MSMF) terminar e a thread
             # encerrar, evitando duas threads _loop concorrentes. No encerramento
@@ -374,9 +413,10 @@ class Pipeline:
 
         self._status("Abrindo camera... (pode levar alguns segundos)")
         cap, _backend = open_camera(cfg.camera_index, cfg.width, cfg.height, cfg.fps)
-        # O DirectShow (fallback) entrega a imagem azulada; sinalizamos para
-        # corrigir a cor no processamento. O MSMF ja vem com a cor correta.
-        self._needs_color_fix = (_backend == "DirectShow")
+        # Sem correcao de cor: usar a imagem pura da camera (como os outros
+        # apps). Medido: a camera crua e neutra (B/R ~1.03), nao azulada; o
+        # azul observado antes vinha de um build quebrado, nao da captura.
+        self._needs_color_fix = False
 
         if cap is None:
             self._error(
@@ -507,26 +547,21 @@ class Pipeline:
 
                 try:
                     with self._lock:
+                        # Face swap PRIMEIRO, no frame cru da camera (como a
+                        # ponte que ficou boa). O motor deles ja faz deteccao
+                        # (assincrona no backend), swap, mouth mask e color
+                        # correction. Framing/blur, se ligados, vem DEPOIS.
+                        if cfg.faceswap_enabled and self._swapper and self._source_face \
+                                and self._source_face.ready:
+                            res = self._swapper.swap_frame(
+                                frame, self._source_face.handle)
+                            frame = res.frame
                         if cfg.framing_enabled and self._framing:
                             frame = self._framing.process(
                                 frame, ts_ms,
                                 zoom=cfg.framing_zoom,
                                 smoothing=cfg.framing_smoothing,
                             )
-                        # Face swap INLINE (como o Deep-Live-Cam): roda direto no
-                        # loop, sob o _lock. Simples e confiavel; o worker em
-                        # thread separada nao publicava resultado no app. Com CUDA
-                        # (~99ms) o FPS aguenta; o detect a cada N frames (dentro
-                        # do backend) alivia o custo da deteccao.
-                        if cfg.faceswap_enabled and self._swapper and self._source_face \
-                                and self._source_face.ready:
-                            self._swap_frame_no += 1
-                            do_detect = (self._swap_frame_no % max(
-                                1, getattr(cfg, "faceswap_detect_every", 3))) == 0 \
-                                or self._swap_frame_no == 1
-                            res = self._swapper.swap_frame(
-                                frame, self._source_face.handle, detect=do_detect)
-                            frame = res.frame
                         if cfg.blur_enabled and self._blur:
                             frame = self._blur.process(
                                 frame, ts_ms + 1,

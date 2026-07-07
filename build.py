@@ -71,7 +71,16 @@ def main() -> int:
                       # deps de rede que o insightface usa para baixar modelos;
                       # sem elas o exe quebra com ModuleNotFoundError urllib3.
                       "requests", "urllib3", "charset_normalizer", "idna",
-                      "certifi")
+                      "certifi",
+                      # deps do sklearn/skimage/albumentations que o --no-deps
+                      # do CI nao instala; sem elas o exe quebra em cascata
+                      # (joblib, depois scipy, depois...). Lista obtida
+                      # rastreando os imports reais da cadeia de face swap.
+                      "joblib", "threadpoolctl", "scipy", "PIL", "yaml",
+                      "packaging", "wcwidth", "colorama", "networkx",
+                      "lazy_loader", "tifffile", "imageio", "matplotlib",
+                      "narwhals", "six", "cffi", "cycler", "fontTools",
+                      "kiwisolver", "pyparsing")
     have_faceswap = importlib.util.find_spec("insightface") is not None
     if have_faceswap:
         for collect in _faceswap_libs:

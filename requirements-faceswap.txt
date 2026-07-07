@@ -28,6 +28,14 @@ scikit-image==0.24.0
 
 # transitivas do insightface (necessarias por causa do --no-deps)
 requests
+# deps de rede do requests: com --no-deps elas NAO sao puxadas, entao o CI nao
+# as instala, o build.py nao acha find_spec("urllib3") e o bundle sai SEM
+# urllib3 -> o face swap crasha com "ModuleNotFoundError: No module named
+# 'urllib3'" (foi o que travou a v0.0.15 no instalador). Listar explicitamente.
+urllib3
+certifi
+idna
+charset_normalizer
 easydict
 prettytable
 tqdm

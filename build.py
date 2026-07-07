@@ -75,11 +75,13 @@ def main() -> int:
                 cmd += ["--collect-all", collect]
         # Motor do Deep-Live-Cam vendorizado. Ele e importado dinamicamente
         # (o loader registra o pacote como 'modules' em runtime), entao o
-        # PyInstaller NAO ve a dependencia. Precisa de 3 coisas:
-        #  1) a arvore de arquivos .py como DADOS (o loader le os modulos);
-        #  2) --collect-submodules para os bytecodes irem no bundle;
-        #  3) hidden-imports dos modulos-chave.
-        cmd += ["--add-data", f"{Path('camfx') / 'vendor'}{sep}camfx/vendor"]
+        # PyInstaller NAO ve a dependencia. Usar --collect-submodules +
+        # hidden-imports para incluir os bytecodes.
+        # ATENCAO: NAO usar --add-data camfx/vendor -> isso cria uma pasta
+        # fisica _internal/camfx/vendor que o Python passa a tratar como o
+        # pacote `camfx`, ESCONDENDO os demais modulos (camfx.faceswap,
+        # camfx.pipeline...) que ficam no bytecode. Foi o que quebrou o
+        # face swap no exe v0.0.12.
         cmd += ["--collect-submodules", "camfx.vendor"]
         for hidden in (
             "camfx.vendor.dlc",

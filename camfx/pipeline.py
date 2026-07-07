@@ -326,8 +326,19 @@ class Pipeline:
             from .log import log as _log
             _log("faceswap: pronto (inline)")
         except Exception as exc:
+            import traceback
+            tb = traceback.format_exc()
             from .log import log as _log
-            _log(f"faceswap: setup falhou: {exc!r}")
+            _log(f"faceswap: setup falhou: {exc!r}\n{tb}")
+            # Fallback: grava tambem no startup.log (caso o camfx.log falhe no exe)
+            try:
+                import os, time
+                base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+                p = os.path.join(base, "CamFX", "startup.log")
+                with open(p, "a", encoding="utf-8") as f:
+                    f.write(f"{time.strftime('%H:%M:%S')} FACESWAP FALHOU:\n{tb}\n")
+            except Exception:
+                pass
             self._error(f"Troca de rosto indisponivel: {exc}")
             self._swapper = None
             self._source_face = None

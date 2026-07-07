@@ -40,8 +40,30 @@ easydict
 prettytable
 tqdm
 scikit-learn
+# deps do scikit-learn (com --no-deps nao sao puxadas -> crash
+# "ModuleNotFoundError: No module named 'joblib'"). Mesma armadilha do urllib3.
+joblib
+threadpoolctl
+scipy
 lazy_loader
 networkx
 tifffile
 imageio
 albumentations==1.4.3
+# deps transitivas usadas em runtime pelas libs acima (skimage/albumentations/
+# prettytable/tqdm). Sem elas o bundle quebra em cascata, um modulo por vez.
+# Lista obtida rastreando os imports reais da cadeia insightface+skimage+sklearn.
+pillow
+PyYAML
+packaging
+wcwidth
+colorama
+typing_extensions
+matplotlib
+narwhals
+six
+cffi
+cycler
+fonttools
+kiwisolver
+pyparsing

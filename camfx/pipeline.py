@@ -129,7 +129,6 @@ def open_camera(index: int, width: int | None = None, height: int | None = None,
                         break
                 if good >= 5:
                     log("open_camera: MSMF OK")
-                    _cache_backend("MSMF")
                     return cap, "MSMF"
                 log(f"open_camera: MSMF instavel ({good}/8 frames), "
                     "tentando DirectShow")

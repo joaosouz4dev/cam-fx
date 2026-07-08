@@ -75,19 +75,27 @@ def check_for_update() -> dict | None:
     if not remote or not is_newer(remote, local):
         return None
 
+    # O instalador pode se chamar "CamFX-Setup.exe" (antigo) ou
+    # "CamFX-Setup-<versao>.exe" (novo, com a versao no nome). Casa por prefixo
+    # + sufixo para funcionar com os dois.
     asset_url = None
+    asset_name = None
     for asset in data.get("assets", []) or []:
-        if asset.get("name") == _ASSET_NAME:
+        name = asset.get("name") or ""
+        low = name.lower()
+        if low.startswith("camfx-setup") and low.endswith(".exe"):
             asset_url = asset.get("browser_download_url")
+            asset_name = name
             break
     if not asset_url:
-        log("updater: release sem CamFX-Setup.exe anexado")
+        log("updater: release sem CamFX-Setup*.exe anexado")
         return None
 
     return {
         "version": remote,
         "tag": tag,
         "url": asset_url,
+        "asset_name": asset_name,
         "notes": data.get("body") or "",
         "html_url": data.get("html_url") or "",
     }
@@ -99,9 +107,16 @@ def _updates_dir() -> Path:
     return d
 
 
-def download_installer(url: str, on_progress=None) -> Path | None:
-    """Baixa o instalador. on_progress(recebidos, total) e opcional."""
-    dest = _updates_dir() / _ASSET_NAME
+def download_installer(url: str, on_progress=None,
+                       filename: str | None = None) -> Path | None:
+    """Baixa o instalador. on_progress(recebidos, total) e opcional.
+
+    `filename`: nome do arquivo de saida (o asset da release, ex.:
+    CamFX-Setup-0.0.20.exe). Se ausente, usa o nome padrao."""
+    name = filename or _ASSET_NAME
+    if not name.lower().endswith(".exe"):
+        name = _ASSET_NAME
+    dest = _updates_dir() / name
     tmp = dest.with_suffix(".part")
     try:
         req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})

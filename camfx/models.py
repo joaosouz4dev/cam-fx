@@ -229,8 +229,13 @@ BUFFALO_L_URL = (
 
 
 def buffalo_l_dir() -> Path:
-    """Pasta onde o insightface espera o pack buffalo_l (5 arquivos .onnx)."""
-    return insightface_home() / "models" / "buffalo_l"
+    """Pasta onde o insightface REALMENTE procura o buffalo_l.
+
+    ATENCAO: o insightface usa root='~/.insightface' HARDCODED (nao le a env
+    INSIGHTFACE_HOME). Entao baixar para LOCALAPPDATA/CamFX nao adianta - o
+    insightface ignora e tenta baixar em ~/.insightface (sem timeout, travando
+    o app). Baixamos direto onde ele procura."""
+    return Path.home() / ".insightface" / "models" / "buffalo_l"
 
 
 def ensure_buffalo_l(progress=None) -> Path:

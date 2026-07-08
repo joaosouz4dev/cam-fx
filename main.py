@@ -108,9 +108,78 @@ def _selfcheck() -> int:
         return 0
 
 
+def _selftest_swap() -> int:
+    """Teste REAL do face swap DENTRO do bundle (exe instalado), sem camera.
+
+    Carrega o motor DLC de verdade e troca um rosto num frame de teste (a propria
+    foto-fonte configurada). Prova que o swap FUNCIONA no bundle - nao so que os
+    modulos importam. E o que rodar localmente no exe instalado para validar uma
+    release ANTES de publicar: `"C:\\Program Files\\CamFX\\CamFX.exe" --selftest-swap`.
+    Escreve o resultado em LOCALAPPDATA/CamFX/selftest_swap.txt e no stdout."""
+    import time
+
+    def _report(msg: str) -> None:
+        print(msg)
+        try:
+            base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+            d = os.path.join(base, "CamFX")
+            os.makedirs(d, exist_ok=True)
+            with open(os.path.join(d, "selftest_swap.txt"), "w", encoding="utf-8") as f:
+                f.write(msg + "\n")
+        except Exception:
+            pass
+
+    try:
+        import cv2
+        import numpy as np
+        from camfx.config import Config
+        from camfx.faceswap.swap_stage import SwapStage
+
+        cfg = Config.load()
+        src = getattr(cfg, "source_face_path", "")
+        if not src or not os.path.exists(src):
+            _report("SELFTEST-SWAP: sem foto-fonte configurada (escolha um rosto "
+                    "no app primeiro). Nao da para testar o swap.")
+            return 2
+
+        t0 = time.time()
+        stage = SwapStage(source_path=src,
+                          device=getattr(cfg, "compute_device", "auto"))
+        if not stage.prepare():
+            _report("SELFTEST-SWAP: FALHOU - motor nao preparou (ver camfx.log)")
+            return 1
+        # frame de teste: a propria foto-fonte (tem um rosto). Roda alguns
+        # process para a deteccao assincrona pegar o rosto.
+        data = np.fromfile(src, dtype=np.uint8)
+        frame = cv2.imdecode(data, cv2.IMREAD_COLOR)
+        frame = cv2.resize(frame, (1280, 720))
+        out = frame
+        for _ in range(40):
+            out = stage.process(frame)
+            if not np.array_equal(out, frame):
+                break
+            time.sleep(0.1)
+        changed = not np.array_equal(out, frame)
+        stage.close()
+        dt = time.time() - t0
+        if changed:
+            _report(f"SELFTEST-SWAP: OK - swap funciona no bundle "
+                    f"(motor+troca em {dt:.0f}s)")
+            return 0
+        _report("SELFTEST-SWAP: FALHOU - o swap nao alterou o frame "
+                "(deteccao nao pegou o rosto)")
+        return 1
+    except Exception as exc:
+        _report(f"SELFTEST-SWAP: ERRO - {type(exc).__name__}: {exc}\n"
+                f"{traceback.format_exc()}")
+        return 1
+
+
 if __name__ == "__main__":
     if "--selfcheck" in sys.argv:
         raise SystemExit(_selfcheck())
+    if "--selftest-swap" in sys.argv:
+        raise SystemExit(_selftest_swap())
     try:
         main()
     except Exception:

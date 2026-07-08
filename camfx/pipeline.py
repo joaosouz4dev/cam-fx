@@ -281,9 +281,8 @@ class Pipeline:
         self._lock = threading.Lock()
         self._blur: BackgroundBlur | None = None
         self._framing: AutoFraming | None = None
-        self._swapper = None        # FaceSwapperBackend | None
-        self._source_face = None    # SourceFace | None
-        self._swap_frame_no = 0     # contador p/ detectar a cada N frames
+        # O face swap NAO roda neste pipeline: quando ligado, o app usa o
+        # BridgeRunner (motor DLC puro). Este pipeline cuida so de framing+blur.
         self._bridge = None         # BridgeRunner (modo ponte) | None
         self._fps_actual = 0.0
         self.on_error = None  # callback(str) opcional
@@ -373,21 +372,6 @@ class Pipeline:
             if was:
                 self.start()
 
-    def update_source_face(self) -> None:
-        """Recarrega apenas a foto-fonte do face swap, SEM reiniciar o pipeline.
-
-        Trocar a foto nao exige reabrir a camera nem recarregar o insightface;
-        so atualizar o SourceFace. Evita o restart pesado (e a cor azul que vinha
-        do fallback DirectShow quando a camera ficava presa no restart)."""
-        if not (self.running and self._swapper and self._source_face):
-            return
-        try:
-            with self._lock:
-                self._source_face.load(self.config.source_face_path, self._swapper)
-        except Exception as exc:
-            from .log import log as _log
-            _log(f"faceswap: update_source_face falhou: {exc!r}")
-
     def _status(self, msg: str) -> None:
         if self.on_status:
             self.on_status(msg)
@@ -395,77 +379,6 @@ class Pipeline:
     def _error(self, msg: str) -> None:
         if self.on_error:
             self.on_error(msg)
-
-    def _setup_faceswap(self, cfg) -> None:
-        """Carrega o backend de face swap se habilitado e permitido.
-
-        Tudo aqui e tolerante a falha: qualquer problema (modelos, termos, foto)
-        apenas desativa o swap e segue o pipeline normal.
-        """
-        self._swapper = None
-        self._source_face = None
-        if not getattr(cfg, "faceswap_enabled", False):
-            return
-        try:
-            from . import terms
-            if terms.needs_acceptance(cfg):
-                from .log import log as _log
-                _log("faceswap: termos nao aceitos, swap desativado")
-                return
-            if not cfg.source_face_path:
-                self._status("Escolha uma foto de rosto para a troca.")
-                return
-            self._status("Preparando troca de rosto... (pode baixar modelos)")
-            from .faceswap import load_swapper, registry
-            from .faceswap.source_face import SourceFace
-
-            # Modelos selecionados (catalogo/proprio). enhance liga se houver um
-            # enhancer escolhido OU o toggle classico faceswap_enhance.
-            swap_path = registry.resolve_swapper(cfg)
-            enhance_path = registry.resolve_enhancer(cfg)
-            want_enhance = bool(enhance_path) or getattr(cfg, "faceswap_enhance", False)
-            self._swapper = load_swapper(
-                cfg.faceswap_backend, cfg.compute_device,
-                enhance=want_enhance,
-                swap_model_path=swap_path,
-                enhance_model_path=enhance_path,
-                refine=getattr(cfg, "faceswap_refine", False),
-            )
-            self._source_face = SourceFace()
-            if not self._source_face.load(cfg.source_face_path, self._swapper):
-                self._error("Nenhum rosto encontrado na foto escolhida.")
-                self._swapper = None
-                self._source_face = None
-                return
-            self._swap_frame_no = 0
-            from .log import log as _log
-            _log("faceswap: pronto (inline)")
-        except Exception as exc:
-            import traceback
-            tb = traceback.format_exc()
-            from .log import log as _log
-            _log(f"faceswap: setup falhou: {exc!r}\n{tb}")
-            # Fallback: grava tambem no startup.log (caso o camfx.log falhe no exe)
-            try:
-                import os, time
-                base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
-                p = os.path.join(base, "CamFX", "startup.log")
-                with open(p, "a", encoding="utf-8") as f:
-                    f.write(f"{time.strftime('%H:%M:%S')} FACESWAP FALHOU:\n{tb}\n")
-            except Exception:
-                pass
-            self._error(f"Troca de rosto indisponivel: {exc}")
-            self._swapper = None
-            self._source_face = None
-
-    def _teardown_faceswap(self) -> None:
-        if self._swapper:
-            try:
-                self._swapper.close()
-            except Exception:
-                pass
-            self._swapper = None
-        self._source_face = None
 
     def _loop(self) -> None:
         cfg = self.config
@@ -533,11 +446,6 @@ class Pipeline:
             self._running.clear()
             return
 
-        # Face swap (opcional, pesado): so carrega se habilitado, com termos
-        # aceitos e uma foto-fonte valida. Falha aqui nao derruba o pipeline -
-        # apenas segue sem swap.
-        self._setup_faceswap(cfg)
-
         try:
             with CamFXVirtualCamera(fps=cfg.fps) as cam:
                 self._status(f"Camera virtual ativa: {cam.device}")
@@ -549,8 +457,6 @@ class Pipeline:
             )
         finally:
             cap.release()
-            # Para o worker de face swap antes de fechar os modelos.
-            self._teardown_faceswap()
             # Fecha os modelos sob o mesmo lock do processamento, para nunca
             # destruir o segmenter/detector enquanto um frame esta em process()
             # (evita o erro 'Task runner is currently not running').
@@ -660,15 +566,10 @@ class Pipeline:
 
                 try:
                     with self._lock:
-                        # Face swap PRIMEIRO, no frame cru da camera (como a
-                        # ponte que ficou boa). O motor deles ja faz deteccao
-                        # (assincrona no backend), swap, mouth mask e color
-                        # correction. Framing/blur, se ligados, vem DEPOIS.
-                        if cfg.faceswap_enabled and self._swapper and self._source_face \
-                                and self._source_face.ready:
-                            res = self._swapper.swap_frame(
-                                frame, self._source_face.handle)
-                            frame = res.frame
+                        # NOTA: o face swap NAO roda aqui. Quando ligado (com foto
+                        # + termos), _use_bridge() e True e o app usa o
+                        # BridgeRunner (motor DLC puro) em vez deste _loop. Este
+                        # loop cuida so de framing + blur (camera "limpa").
                         if cfg.framing_enabled and self._framing:
                             frame = self._framing.process(
                                 frame, ts_ms,
@@ -699,8 +600,7 @@ class Pipeline:
                     from .log import log as _log
                     _log(f"processando: blur={cfg.blur_enabled and self._blur is not None} "
                          f"framing={cfg.framing_enabled and self._framing is not None} "
-                         f"faceswap={cfg.faceswap_enabled and self._swapper is not None} "
-                         f"source_ready={self._source_face.ready if self._source_face else False}")
+                         f"(sem swap - o swap roda no BridgeRunner)")
                 now = time.perf_counter()
                 if now - last_fps_calc >= 1.0:
                     self._fps_actual = frame_count / (now - last_fps_calc)

@@ -134,16 +134,15 @@ jobs:
           & $iscc "/DMyAppVersion=${{ steps.ver.outputs.version }}" installer\camfx.iss
           if (-not (Test-Path "installer\output\CamFX-Setup.exe")) { throw "Instalador nao gerado." }
 
-      - name: Criar tag
-        shell: pwsh
-        run: |
-          git tag ${{ steps.ver.outputs.tag }}
-          git push origin ${{ steps.ver.outputs.tag }}
-
       - name: Publicar release
+        # A propria action cria a tag (via API do GitHub) no commit atual. Nao
+        # usamos `git push origin <tag>` porque o GITHUB_TOKEN e bloqueado ao
+        # empurrar um ref cujo commit altera .github/workflows/* sem a permissao
+        # `workflows` (foi o que falhou na v0.0.19). A API nao tem essa restricao.
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.ver.outputs.tag }}
+          target_commitish: ${{ github.sha }}
           name: CamFX ${{ steps.ver.outputs.version }}
           files: installer/output/CamFX-Setup.exe
           body: |

@@ -281,9 +281,9 @@ class Pipeline:
         self._lock = threading.Lock()
         self._blur: BackgroundBlur | None = None
         self._framing: AutoFraming | None = None
-        # O face swap NAO roda neste pipeline: quando ligado, o app usa o
-        # BridgeRunner (motor DLC puro). Este pipeline cuida so de framing+blur.
-        self._bridge = None         # BridgeRunner (modo ponte) | None
+        # Face swap como ESTAGIO do pipeline unico (Fase 3): SwapStage plugado
+        # no _loop quando ligado, entre a captura e o framing/blur.
+        self._swap = None           # SwapStage | None
         self._fps_actual = 0.0
         self.on_error = None  # callback(str) opcional
         self.on_status = None  # callback(str) opcional
@@ -294,13 +294,11 @@ class Pipeline:
 
     @property
     def fps(self) -> float:
-        if self._bridge is not None:
-            return self._bridge.fps
         return self._fps_actual
 
     def _use_bridge(self) -> bool:
-        """Usa o BridgeRunner (motor DLC puro, como a ponte que ficou linda)
-        quando o face swap esta ligado, com foto e termos aceitos."""
+        """True se o estagio de face swap deve ser plugado no loop: swap ligado,
+        com foto-fonte e termos aceitos."""
         cfg = self.config
         if not getattr(cfg, "faceswap_enabled", False):
             return False
@@ -320,38 +318,21 @@ class Pipeline:
         return self._ss_lock
 
     def start(self) -> None:
-        # Serializa com stop(): o _loop e o bridge NAO podem coexistir (os dois
-        # abririam a mesma camera e um falharia com "camera nao entregou frame").
+        # PIPELINE UNICO (Fase 3): um so loop de captura -> [swap] -> framing ->
+        # blur -> saida. O face swap virou um ESTAGIO (SwapStage) plugado dentro
+        # do _loop quando ligado, em vez de um pipeline paralelo (BridgeRunner).
+        # Assim ha um so dono da camera, um so envio, sem os dois caminhos
+        # brigando. Serializado com stop() pelo _ss_lock.
         with self._startstop_lock():
             if self.running:
                 return
             self._running.set()
-            if self._use_bridge():
-                # Modo ponte: motor DLC puro escreve no frame.bin. Espera a
-                # camera do _loop (se houve) liberar antes de o bridge abrir.
-                from .faceswap.bridge_runner import BridgeRunner
-                self._bridge = BridgeRunner(
-                    source_path=self.config.source_face_path,
-                    camera_index=self.config.camera_index,
-                    device=self.config.compute_device,
-                    mouth_mask=True,
-                    config=self.config,
-                    on_status=self._status,   # feedback do carregamento na UI
-                )
-                self._bridge.start()
-                return
             self._thread = threading.Thread(target=self._loop, daemon=True)
             self._thread.start()
 
     def stop(self, join_timeout: float = 45) -> None:
         with self._startstop_lock():
             self._running.clear()
-            if getattr(self, "_bridge", None) is not None:
-                try:
-                    self._bridge.stop()
-                except Exception:
-                    pass
-                self._bridge = None
             if self._thread:
                 # Espera a abertura lenta da camera (MSMF) terminar e a thread
                 # encerrar, evitando duas threads _loop concorrentes.
@@ -446,6 +427,27 @@ class Pipeline:
             self._running.clear()
             return
 
+        # Estagio de face swap (opcional): plugado no loop se o swap estiver
+        # ligado com foto + termos. Carrega o motor DLC (lento ~6-10s) com
+        # feedback na UI. Se falhar, o loop segue sem swap (so blur/framing).
+        self._swap = None
+        if self._use_bridge():
+            try:
+                from .faceswap.swap_stage import SwapStage
+                stage = SwapStage(
+                    source_path=cfg.source_face_path,
+                    device=cfg.compute_device,
+                    mouth_mask=True,
+                    on_status=self._status,
+                )
+                if stage.prepare():
+                    self._swap = stage
+                else:
+                    stage.close()
+            except Exception as exc:
+                from .log import log as _log
+                _log(f"swap: falha ao criar estagio: {exc!r}")
+
         try:
             with CamFXVirtualCamera(fps=cfg.fps) as cam:
                 self._status(f"Camera virtual ativa: {cam.device}")
@@ -461,6 +463,9 @@ class Pipeline:
             # destruir o segmenter/detector enquanto um frame esta em process()
             # (evita o erro 'Task runner is currently not running').
             with self._lock:
+                if self._swap:
+                    self._swap.close()
+                    self._swap = None
                 if self._blur:
                     self._blur.close()
                     self._blur = None
@@ -566,10 +571,13 @@ class Pipeline:
 
                 try:
                     with self._lock:
-                        # NOTA: o face swap NAO roda aqui. Quando ligado (com foto
-                        # + termos), _use_bridge() e True e o app usa o
-                        # BridgeRunner (motor DLC puro) em vez deste _loop. Este
-                        # loop cuida so de framing + blur (camera "limpa").
+                        # Face swap PRIMEIRO (no frame cru), depois framing e
+                        # blur - a mesma ordem que ficou boa na ponte. O swap e
+                        # um estagio plugado (SwapStage), com deteccao assincrona
+                        # propria; se nao ha rosto detectado ainda, devolve o
+                        # frame original sem travar.
+                        if self._swap is not None and self._swap.ready:
+                            frame = self._swap.process(frame)
                         if cfg.framing_enabled and self._framing:
                             frame = self._framing.process(
                                 frame, ts_ms,
@@ -600,7 +608,7 @@ class Pipeline:
                     from .log import log as _log
                     _log(f"processando: blur={cfg.blur_enabled and self._blur is not None} "
                          f"framing={cfg.framing_enabled and self._framing is not None} "
-                         f"(sem swap - o swap roda no BridgeRunner)")
+                         f"swap={self._swap is not None and self._swap.ready}")
                 now = time.perf_counter()
                 if now - last_fps_calc >= 1.0:
                     self._fps_actual = frame_count / (now - last_fps_calc)

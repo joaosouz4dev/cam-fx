@@ -99,11 +99,15 @@ jobs:
           # Impede publicar instalador quebrado. O selfcheck so IMPORTA (nao
           # baixa modelo nem abre camera), entao roda rapido mesmo sem GPU; o
           # 1o load pode levar ~1-2min pela compilacao de bytecode do bundle.
+          # O exe e --windowed (GUI): `& $exe` NAO bloqueia e $LASTEXITCODE nao
+          # reflete o exit real. Usar Start-Process -Wait -PassThru para esperar
+          # o processo terminar e pegar o ExitCode de verdade.
           $exe = "dist\CamFX\CamFX.exe"
-          & $exe --selfcheck
-          $code = $LASTEXITCODE
+          Remove-Item "$env:LOCALAPPDATA\CamFX\selfcheck.txt" -ErrorAction SilentlyContinue
+          $p = Start-Process -FilePath $exe -ArgumentList "--selfcheck" -Wait -PassThru
+          $code = $p.ExitCode
           $result = Get-Content "$env:LOCALAPPDATA\CamFX\selfcheck.txt" -ErrorAction SilentlyContinue
-          Write-Host "selfcheck: $result"
+          Write-Host "selfcheck exit=$code resultado: $result"
           if ($code -ne 0) { throw "SELFCHECK FALHOU (modulo faltando no bundle): $result" }
 
       - name: Instalar Inno Setup

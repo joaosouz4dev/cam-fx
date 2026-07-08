@@ -22,18 +22,27 @@ class BridgeRunner:
     """Executa o loop da ponte numa thread. start()/stop()."""
 
     def __init__(self, source_path: str, camera_index: int = 0,
-                 device: str = "auto", mouth_mask: bool = True, config=None):
+                 device: str = "auto", mouth_mask: bool = True, config=None,
+                 on_status=None):
         self._source_path = source_path
         self._camera_index = camera_index
         self._device = device
         self._mouth_mask = mouth_mask
         self._config = config   # para ler blur/framing ao vivo
+        self._on_status = on_status   # callback(str) p/ feedback na UI
         self._thread = None
         self._stop = threading.Event()
         self._fps = 0.0
         self._running = False
         self._blur = None
         self._framing = None
+
+    def _status(self, msg: str) -> None:
+        if self._on_status:
+            try:
+                self._on_status(msg)
+            except Exception:
+                pass
 
     @property
     def running(self) -> bool:
@@ -104,7 +113,10 @@ class BridgeRunner:
                 log(f"bridge: enable_cuda_dlls falhou: {exc!r}")
 
         # Registra o motor vendorizado como pacote 'modules' e configura globals.
+        # Feedback na UI em cada etapa: o 1o carregamento do motor (detector +
+        # inswapper no CUDA) leva ~10-60s; sem status a UI parece travada.
         try:
+            self._status("Preparando o motor de troca de rosto...")
             from ..vendor.dlc import ensure_engine
             swapper = ensure_engine()
             from ..models import models_dir, ensure_faceswap_models, insightface_home
@@ -112,8 +124,10 @@ class BridgeRunner:
             swapper.models_dir = str(models_dir())
 
             import modules.globals as G
-            provs = (["CPUExecutionProvider"] if self._device == "cpu"
-                     else ["CUDAExecutionProvider", "CPUExecutionProvider"])
+            # Politica unica: swap/detector so usa CUDA ou CPU (nunca DirectML,
+            # que quebra o detector buffalo_l). Fallback CPU automatico.
+            from ..models import providers_for
+            provs = providers_for(self._device, kind="swap")
             G.execution_providers = provs
             G.source_path = self._source_path
             G.many_faces = False
@@ -125,9 +139,11 @@ class BridgeRunner:
             G.frame_processors = ["face_swapper"]
             G.fp_ui = {"face_enhancer": False}
 
+            self._status("Verificando modelos de IA...")
             ensure_faceswap_models(fp16="CUDAExecutionProvider" in provs)
             from modules.face_analyser import get_one_face
 
+            self._status("Carregando o detector de rosto... (pode levar ~1 min)")
             source_face = get_one_face(cv2.imread(self._source_path))
             if source_face is None:
                 # cv2.imread falha com acento no caminho; tenta imdecode.
@@ -136,19 +152,23 @@ class BridgeRunner:
                 source_face = get_one_face(img) if img is not None else None
             if source_face is None:
                 log("bridge: nenhum rosto na foto-fonte")
+                self._status("Nenhum rosto encontrado na foto escolhida.")
                 return
 
+            self._status("Carregando o modelo de troca...")
             model = swapper.get_face_swapper()
             log(f"bridge: motor pronto, provider={model.session.get_providers()[0]}")
         except Exception as exc:
             import traceback
             log(f"bridge: falha ao preparar motor: {exc!r}\n{traceback.format_exc()}")
+            self._status("Falha ao preparar a troca de rosto.")
             return
 
         # Abre a camera pela MESMA rotina do pipeline normal (open_camera):
         # MSMF -> DirectShow com cache/validacao, uma logica so para os dois
         # caminhos. Se o _loop acabou de liberar a camera, o 1o open pode
         # falhar; tenta algumas vezes antes de desistir.
+        self._status("Abrindo a camera...")
         from ..pipeline import open_camera
         cap = None
         for attempt in range(4):
@@ -201,6 +221,7 @@ class BridgeRunner:
 
         self._running = True
         log("bridge: transmitindo na CamFX")
+        self._status("Troca de rosto ativa.")
         n, t0 = 0, time.time()
         try:
             while not self._stop.is_set():

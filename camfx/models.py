@@ -85,6 +85,40 @@ def ensure_models(progress=None) -> dict[str, Path]:
     return resolved
 
 
+def providers_for(device: str = "auto", kind: str = "blur") -> list[str]:
+    """Politica UNICA de escolha GPU/CPU (onnxruntime), com fallback automatico.
+
+    `device`: preferencia do usuario - "auto" | "gpu" | "cpu".
+    `kind`:
+      - "blur"/"segmentation": pode usar DirectML (roda em qualquer GPU) OU CUDA.
+      - "swap"/"detector": NUNCA DirectML - o detector buffalo_l (RetinaFace)
+        quebra em DmlExecutionProvider (UnicodeDecodeError no session.run); so
+        CUDA ou CPU. Ver o historico do projeto.
+
+    Sempre inclui CPUExecutionProvider no fim: se a GPU falhar em runtime, o ORT
+    cai para CPU sozinho. Retorna a lista na ordem de preferencia."""
+    if device == "cpu":
+        return ["CPUExecutionProvider"]
+    try:
+        import onnxruntime as ort
+        avail = set(ort.get_available_providers())
+    except Exception:
+        return ["CPUExecutionProvider"]
+
+    gpu: list[str] = []
+    if kind in ("swap", "detector", "faceswap"):
+        # So CUDA (DirectML quebra o detector).
+        if "CUDAExecutionProvider" in avail:
+            gpu.append("CUDAExecutionProvider")
+    else:
+        # blur/segmentation: DirectML primeiro (roda em qualquer GPU), depois CUDA.
+        if "DmlExecutionProvider" in avail:
+            gpu.append("DmlExecutionProvider")
+        if "CUDAExecutionProvider" in avail:
+            gpu.append("CUDAExecutionProvider")
+    return gpu + ["CPUExecutionProvider"]
+
+
 def enable_cuda_dlls() -> bool:
     """Coloca as DLLs do CUDA/cuDNN (pacotes pip nvidia-*) no PATH.
 

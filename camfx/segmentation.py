@@ -32,17 +32,9 @@ def available_devices() -> list[str]:
 
 
 def _providers_for(device: str):
-    """Mapeia a preferencia (auto|gpu|cpu) para a lista de providers do ORT."""
-    import onnxruntime as ort
-
-    avail = ort.get_available_providers()
-    gpu = [p for p in ("DmlExecutionProvider", "CUDAExecutionProvider") if p in avail]
-    if device == "cpu":
-        return ["CPUExecutionProvider"]
-    if device == "gpu":
-        return gpu + ["CPUExecutionProvider"]
-    # auto: GPU se houver, senao CPU
-    return gpu + ["CPUExecutionProvider"]
+    """Providers do ORT para o blur (politica unica em models.providers_for)."""
+    from .models import providers_for
+    return providers_for(device, kind="blur")
 
 
 class BackgroundBlur:

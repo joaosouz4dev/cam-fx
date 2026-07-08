@@ -178,7 +178,13 @@ class Api:
 
     def get_status(self):
         if self.pipeline.running:
-            return f"Transmitindo na CamFX  ·  {self.pipeline.fps:.0f} FPS"
+            fps = self.pipeline.fps
+            # Enquanto o motor ainda esta subindo (FPS=0), mostra o status de
+            # carregamento (ex.: "Carregando o detector...") em vez de
+            # "0 FPS" - senao a UI parece travada durante o carregamento.
+            if fps < 1 and self._status and "ativa" not in self._status.lower():
+                return self._status
+            return f"Transmitindo na CamFX  ·  {fps:.0f} FPS"
         return self._status
 
     # ---------- termos de uso (face swap) ----------

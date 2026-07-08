@@ -60,10 +60,26 @@ class CamFXVirtualCamera:
         self._mm = mmap.mmap(self._fh.fileno(), TOTAL_BYTES)
 
     def send(self, frame_bgr: np.ndarray) -> None:
-        """Envia um frame BGR (qualquer tamanho; ajustado para 640x480)."""
+        """Envia um frame BGR (qualquer tamanho; ajustado para WIDTHxHEIGHT
+        SEM esticar - corta o excesso no aspecto de saida antes de escalar)."""
         import cv2
 
         if frame_bgr.shape[1] != WIDTH or frame_bgr.shape[0] != HEIGHT:
+            # Crop central no aspecto de saida (16:9) para nao esticar cameras
+            # 4:3 (ex.: C505e em 960p = 1280x960). Sem isto o rosto do face swap
+            # sai alongado.
+            h, w = frame_bgr.shape[:2]
+            target = WIDTH / HEIGHT
+            src = w / h
+            if abs(src - target) > 0.01:
+                if src > target:
+                    new_w = int(round(h * target))
+                    x0 = (w - new_w) // 2
+                    frame_bgr = frame_bgr[:, x0:x0 + new_w]
+                else:
+                    new_h = int(round(w / target))
+                    y0 = (h - new_h) // 2
+                    frame_bgr = frame_bgr[y0:y0 + new_h, :]
             frame_bgr = cv2.resize(frame_bgr, (WIDTH, HEIGHT))
         if not frame_bgr.flags["C_CONTIGUOUS"]:
             frame_bgr = np.ascontiguousarray(frame_bgr)

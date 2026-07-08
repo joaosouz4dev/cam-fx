@@ -58,6 +58,33 @@ def _fix_blue_cast(frame):
     return frame
 
 
+def _fit_aspect(frame, out_w: int, out_h: int):
+    """Redimensiona para out_w x out_h SEM esticar: corta o excesso (crop
+    central) para casar o aspecto e so entao redimensiona.
+
+    A camera pode entregar 4:3 (ex.: C505e em 960p = 1280x960) enquanto a saida
+    e 16:9 (1280x720). Um cv2.resize direto esticava a imagem (rosto alongado).
+    Aqui recortamos a faixa central no aspecto de saida (como os apps de video
+    fazem) e redimensionamos, preservando as proporcoes."""
+    h, w = frame.shape[:2]
+    target = out_w / out_h
+    src = w / h
+    if abs(src - target) > 0.01:
+        if src > target:
+            # fonte mais larga: corta as laterais
+            new_w = int(round(h * target))
+            x0 = (w - new_w) // 2
+            frame = frame[:, x0:x0 + new_w]
+        else:
+            # fonte mais alta (4:3 p/ 16:9): corta topo/base
+            new_h = int(round(w / target))
+            y0 = (h - new_h) // 2
+            frame = frame[y0:y0 + new_h, :]
+    if frame.shape[1] != out_w or frame.shape[0] != out_h:
+        frame = cv2.resize(frame, (out_w, out_h))
+    return frame
+
+
 def _backend_cache_path():
     from .config import config_dir
     return config_dir() / "camera_backend.txt"
@@ -623,7 +650,7 @@ class Pipeline:
                 miss = 0
 
                 if frame.shape[1] != cfg.width or frame.shape[0] != cfg.height:
-                    frame = cv2.resize(frame, (cfg.width, cfg.height))
+                    frame = _fit_aspect(frame, cfg.width, cfg.height)
 
                 # Corrige a cor azulada quando caimos no DirectShow (fallback).
                 if getattr(self, "_needs_color_fix", False):

@@ -185,6 +185,7 @@ class BridgeRunner:
             if self._stop.is_set():
                 return
             if attempt > 0:
+                self._status(f"Abrindo a camera... (tentativa {attempt + 1})")
                 time.sleep(1.5)  # da tempo da camera liberar entre tentativas
             try:
                 c, backend = open_camera(self._camera_index)
@@ -196,6 +197,13 @@ class BridgeRunner:
                 log(f"bridge: tentativa {attempt + 1} de abrir camera falhou: {exc!r}")
         if cap is None:
             log("bridge: camera nao entregou frame (desistindo)")
+            # Mensagem clara em vez de travar em "Verificando modelos": quase
+            # sempre a webcam esta OCUPADA por outro app (ou uma sessao antiga
+            # do CamFX que nao fechou). O usuario resolve fechando o outro app
+            # ou reconectando a webcam.
+            self._status(
+                "Camera ocupada. Feche outros apps que usam a webcam "
+                "(Meet, Zoom, Teams, Chrome) ou reconecte-a, e tente de novo.")
             return
 
         from ..virtualcam import CamFXVirtualCamera

@@ -182,11 +182,15 @@ class Api:
     # ---------- face swap ----------
 
     def set_faceswap_enabled(self, on):
+        log(f"set_faceswap_enabled({on!r}) chamado; "
+            f"needs_terms={terms.needs_acceptance(self.config)}")
         # Gate de seguranca: nunca liga sem aceite dos termos.
         if on and terms.needs_acceptance(self.config):
+            log("set_faceswap_enabled: BLOQUEADO por termos nao aceitos")
             return {"ok": False, "needs_terms": True}
         self.config.faceswap_enabled = bool(on)
         self.config.save()
+        log(f"set_faceswap_enabled: salvo faceswap_enabled={self.config.faceswap_enabled}")
         if self.pipeline.running:
             threading.Thread(target=self.pipeline.restart, daemon=True).start()
         return {"ok": True}

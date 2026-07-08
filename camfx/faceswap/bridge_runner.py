@@ -145,10 +145,11 @@ class BridgeRunner:
             log(f"bridge: falha ao preparar motor: {exc!r}\n{traceback.format_exc()}")
             return
 
-        # Camera via pygrabber (a C505e nao abre por cv2.VideoCapture). Se o
-        # pipeline _loop acabou de liberar a camera, o 1o open pode falhar;
-        # tenta algumas vezes antes de desistir.
-        from ..capture import DirectShowCapture
+        # Abre a camera pela MESMA rotina do pipeline normal (open_camera):
+        # MSMF -> DirectShow com cache/validacao, uma logica so para os dois
+        # caminhos. Se o _loop acabou de liberar a camera, o 1o open pode
+        # falhar; tenta algumas vezes antes de desistir.
+        from ..pipeline import open_camera
         cap = None
         for attempt in range(4):
             if self._stop.is_set():
@@ -156,11 +157,11 @@ class BridgeRunner:
             if attempt > 0:
                 time.sleep(1.5)  # da tempo da camera liberar entre tentativas
             try:
-                c = DirectShowCapture(self._camera_index)
-                if not hasattr(c, "wait_first_frame") or c.wait_first_frame(timeout=8.0):
+                c, backend = open_camera(self._camera_index)
+                if c is not None:
                     cap = c
+                    log(f"bridge: camera aberta ({backend})")
                     break
-                c.release()
             except Exception as exc:
                 log(f"bridge: tentativa {attempt + 1} de abrir camera falhou: {exc!r}")
         if cap is None:

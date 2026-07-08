@@ -93,6 +93,8 @@ jobs:
           # release NAO sai.
           python tools/test_demand_logic.py
           if ($LASTEXITCODE -ne 0) { throw "TESTE DO DEMAND LOOP FALHOU" }
+          python tools/test_single_instance.py
+          if ($LASTEXITCODE -ne 0) { throw "TESTE DO SINGLE INSTANCE FALHOU" }
 
       - name: Gerar o executavel (PyInstaller)
         shell: pwsh

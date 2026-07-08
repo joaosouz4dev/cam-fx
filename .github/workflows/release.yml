@@ -132,7 +132,8 @@ jobs:
         run: |
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
           & $iscc "/DMyAppVersion=${{ steps.ver.outputs.version }}" installer\camfx.iss
-          if (-not (Test-Path "installer\output\CamFX-Setup.exe")) { throw "Instalador nao gerado." }
+          $setup = "installer\output\CamFX-Setup-${{ steps.ver.outputs.version }}.exe"
+          if (-not (Test-Path $setup)) { throw "Instalador nao gerado: $setup" }
 
       - name: Publicar release
         # A propria action cria a tag (via API do GitHub) no commit atual. Nao
@@ -144,14 +145,14 @@ jobs:
           tag_name: ${{ steps.ver.outputs.tag }}
           target_commitish: ${{ github.sha }}
           name: CamFX ${{ steps.ver.outputs.version }}
-          files: installer/output/CamFX-Setup.exe
+          files: installer/output/CamFX-Setup-${{ steps.ver.outputs.version }}.exe
           body: |
             ## CamFX ${{ steps.ver.outputs.version }} — Câmera virtual com blur de fundo para Windows 11
 
-            ⬇️ Baixe o **CamFX-Setup.exe** abaixo e execute (Windows 11 22H2+).
+            ⬇️ Baixe o **CamFX-Setup-${{ steps.ver.outputs.version }}.exe** abaixo e execute (Windows 11 22H2+).
 
             ### Instalação
-            1. Execute o `CamFX-Setup.exe` (pede permissão de administrador).
+            1. Execute o `CamFX-Setup-${{ steps.ver.outputs.version }}.exe` (pede permissão de administrador).
             2. Abra o CamFX e selecione a câmera **CamFX** no seu app de vídeo.
 
             ### Aviso do Windows SmartScreen

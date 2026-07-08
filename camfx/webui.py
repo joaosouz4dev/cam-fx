@@ -399,7 +399,9 @@ class Api:
 
         def worker():
             self._update_progress(0, 0)
-            path = download_installer(info["url"], on_progress=self._update_progress)
+            path = download_installer(
+                info["url"], on_progress=self._update_progress,
+                filename=info.get("asset_name"))
             if not path:
                 self._update_progress(-1, -1)
                 return

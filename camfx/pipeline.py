@@ -284,6 +284,7 @@ class Pipeline:
         # Face swap como ESTAGIO do pipeline unico (Fase 3): SwapStage plugado
         # no _loop quando ligado, entre a captura e o framing/blur.
         self._swap = None           # SwapStage | None
+        self._restarting = False    # True entre stop/start de um restart
         self._fps_actual = 0.0
         self.on_error = None  # callback(str) opcional
         self.on_status = None  # callback(str) opcional
@@ -348,10 +349,18 @@ class Pipeline:
         if not hasattr(self, "_restart_lock"):
             self._restart_lock = threading.Lock()
         with self._restart_lock:
-            was = self.running
-            self.stop()
-            if was:
-                self.start()
+            # _restarting sinaliza ao demand loop para NAO chamar start() no
+            # intervalo entre o stop() e o start() daqui - senao ele via
+            # running=False e disparava um segundo _loop, criando duas threads
+            # que brigavam pela camera (restart infinito ao ligar o swap).
+            self._restarting = True
+            try:
+                was = self.running
+                self.stop()
+                if was:
+                    self.start()
+            finally:
+                self._restarting = False
 
     def _status(self, msg: str) -> None:
         if self.on_status:
@@ -380,6 +389,7 @@ class Pipeline:
                 _com_initialized = True
             except Exception:
                 pass
+
 
         self._status("Abrindo camera... (pode levar alguns segundos)")
         cap, _backend = open_camera(cfg.camera_index, cfg.width, cfg.height, cfg.fps)

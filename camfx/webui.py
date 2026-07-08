@@ -127,9 +127,12 @@ class Api:
                 consumers = self._demand_monitor.consumer_count() if self._demand_monitor else 0
             except Exception:
                 consumers = 0
-            want = pipeline_wanted(
-                consumers, self._preview_forced,
-                getattr(self.config, "faceswap_enabled", False))
+            want = pipeline_wanted(consumers, self._preview_forced)
+            # Nao age enquanto um restart esta em curso (entre stop e start):
+            # senao dispara um 2o _loop que briga pela camera com o restart.
+            if getattr(self.pipeline, "_restarting", False):
+                self._demand_stop.wait(1.0)
+                continue
             if want:
                 empty_since = None
                 if not self.pipeline.running:

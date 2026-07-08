@@ -214,7 +214,59 @@ def ensure_faceswap_models(progress=None, fp16: bool = False) -> dict[str, Path]
                 progress(f"Baixando {name}...")
             _download(url, dest, on_bytes=_bytes_cb(progress))
         resolved[name] = dest
+    # Detector/reconhecedor buffalo_l: baixamos NOS MESMOS (com timeout e
+    # feedback), em vez de deixar o insightface baixar silenciosamente ao rodar
+    # get_one_face - se aquele download travava, o app ficava preso em
+    # "Verificando modelos de IA..." sem timeout nem progresso.
+    ensure_buffalo_l(progress)
     return resolved
+
+
+BUFFALO_L_URL = (
+    "https://github.com/deepinsight/insightface/releases/download/v0.7/"
+    "buffalo_l.zip"
+)
+
+
+def buffalo_l_dir() -> Path:
+    """Pasta onde o insightface espera o pack buffalo_l (5 arquivos .onnx)."""
+    return insightface_home() / "models" / "buffalo_l"
+
+
+def ensure_buffalo_l(progress=None) -> Path:
+    """Garante o detector buffalo_l baixado e extraido. Idempotente.
+
+    O insightface baixaria isto sozinho ao rodar get_one_face, mas sem timeout
+    nem feedback - se travava, o app ficava preso. Aqui usamos nosso _download
+    (timeout=120) e extraimos o zip. Retorna a pasta do modelo."""
+    dest_dir = buffalo_l_dir()
+    # Ja extraido? (o pack tem det_10g.onnx entre outros)
+    if (dest_dir / "det_10g.onnx").exists():
+        return dest_dir
+    if progress:
+        progress("Baixando o detector de rosto (buffalo_l ~280 MB)...")
+    dest_dir.parent.mkdir(parents=True, exist_ok=True)
+    zip_path = dest_dir.parent / "buffalo_l.zip"
+    try:
+        _download(BUFFALO_L_URL, zip_path, on_bytes=_bytes_cb(progress))
+        if progress:
+            progress("Extraindo o detector de rosto...")
+        import zipfile
+        # O zip do insightface pode conter os arquivos na raiz OU dentro de
+        # buffalo_l/. Extrai para buffalo_l/ de qualquer forma.
+        with zipfile.ZipFile(zip_path) as zf:
+            names = zf.namelist()
+            top_has_dir = any(n.startswith("buffalo_l/") for n in names)
+            target = dest_dir.parent if top_has_dir else dest_dir
+            target.mkdir(parents=True, exist_ok=True)
+            zf.extractall(target)
+    finally:
+        try:
+            if zip_path.exists():
+                zip_path.unlink()
+        except Exception:
+            pass
+    return dest_dir
 
 
 def ensure_enhancer_model(progress=None) -> Path:

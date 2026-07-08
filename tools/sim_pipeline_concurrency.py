@@ -196,14 +196,28 @@ def run_sim(scenario: str, seconds: float = 8.0) -> dict:
                     pipe.restart()
             for _ in range(2):
                 threading.Thread(target=rspam, daemon=True).start()
+        elif scenario == "toggle_swap":
+            # Fluxo REAL: preview ligado o tempo todo (demand), e o usuario
+            # liga/desliga o "Trocar meu rosto" algumas vezes (cada toggle =
+            # mudar a config + restart, como set_faceswap_enabled faz).
+            threading.Thread(target=demand, daemon=True).start()
+            time.sleep(2)   # deixa subir com swap
+            def toggler():
+                on = True
+                while time.time() - t0 < seconds:
+                    time.sleep(2.0)   # usuario clica a cada ~2s (realista)
+                    on = not on
+                    pipe._use_bridge = (lambda v: (lambda: v))(on)
+                    pipe.restart()
+            threading.Thread(target=toggler, daemon=True).start()
 
         time.sleep(seconds)
         # No restart_spam, para o spam mas deixa o demand loop rodar mais um
         # pouco: o teste e se o pipeline ESTABILIZA e processa DEPOIS do estresse
         # (no app real o usuario nao da restart a cada 0.3s pra sempre).
         settle_frames_before = STATS.frames_sent
-        if scenario == "restart_spam":
-            time.sleep(3.0)   # deixa estabilizar apos o spam
+        if scenario in ("restart_spam", "toggle_swap"):
+            time.sleep(3.0)   # deixa estabilizar apos o estresse
         stop_demand.set()
         healthy = pipe.running and pipe._thread is not None \
             and pipe._thread.is_alive()
@@ -223,7 +237,8 @@ def run_sim(scenario: str, seconds: float = 8.0) -> dict:
 
 
 def main():
-    scenarios = ["demand_only", "start_stop_spam", "restart_spam"]
+    scenarios = ["demand_only", "start_stop_spam", "restart_spam",
+                 "toggle_swap"]
     ok = True
     for sc in scenarios:
         r = run_sim(sc, seconds=8.0)
@@ -234,7 +249,7 @@ def main():
         cam_ok = r["cam_conflicts"] == 0 and r["cams_still_open"] == 0
         if sc == "start_stop_spam":
             processed = True   # so liga/desliga, nao espera processar
-        elif sc == "restart_spam":
+        elif sc in ("restart_spam", "toggle_swap"):
             # apos o estresse, deve estar saudavel E processar (estabilizou)
             processed = r["healthy_before_stop"] and r["frames_after_settle"] > 0
         else:

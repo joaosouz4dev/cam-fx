@@ -115,8 +115,16 @@ class BridgeRunner:
         # Registra o motor vendorizado como pacote 'modules' e configura globals.
         # Feedback na UI em cada etapa: o 1o carregamento do motor (detector +
         # inswapper no CUDA) leva ~10-60s; sem status a UI parece travada.
+        # Cada etapa loga com tempo decorrido (t0) para diagnosticar onde o
+        # carregamento demora, alem do _status na UI.
+        t0 = time.time()
+
+        def step(status_msg: str, log_msg: str) -> None:
+            self._status(status_msg)
+            log(f"bridge[{time.time() - t0:.0f}s]: {log_msg}")
+
         try:
-            self._status("Preparando o motor de troca de rosto...")
+            step("Preparando o motor de troca de rosto...", "preparando motor")
             from ..vendor.dlc import ensure_engine
             swapper = ensure_engine()
             from ..models import models_dir, ensure_faceswap_models, insightface_home
@@ -139,11 +147,12 @@ class BridgeRunner:
             G.frame_processors = ["face_swapper"]
             G.fp_ui = {"face_enhancer": False}
 
-            self._status("Verificando modelos de IA...")
+            step("Verificando modelos de IA...", "verificando modelos")
             ensure_faceswap_models(fp16="CUDAExecutionProvider" in provs)
             from modules.face_analyser import get_one_face
 
-            self._status("Carregando o detector de rosto... (pode levar ~1 min)")
+            step("Carregando o detector de rosto... (pode levar ~1 min)",
+                 "carregando detector (buffalo_l)")
             source_face = get_one_face(cv2.imread(self._source_path))
             if source_face is None:
                 # cv2.imread falha com acento no caminho; tenta imdecode.
@@ -155,9 +164,10 @@ class BridgeRunner:
                 self._status("Nenhum rosto encontrado na foto escolhida.")
                 return
 
-            self._status("Carregando o modelo de troca...")
+            step("Carregando o modelo de troca...", "carregando inswapper")
             model = swapper.get_face_swapper()
-            log(f"bridge: motor pronto, provider={model.session.get_providers()[0]}")
+            log(f"bridge[{time.time() - t0:.0f}s]: motor pronto, "
+                f"provider={model.session.get_providers()[0]}")
         except Exception as exc:
             import traceback
             log(f"bridge: falha ao preparar motor: {exc!r}\n{traceback.format_exc()}")

@@ -95,6 +95,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "TESTE DO DEMAND LOOP FALHOU" }
           python tools/test_single_instance.py
           if ($LASTEXITCODE -ne 0) { throw "TESTE DO SINGLE INSTANCE FALHOU" }
+          python tools/test_providers.py
+          if ($LASTEXITCODE -ne 0) { throw "TESTE DA POLITICA DE PROVIDERS FALHOU" }
 
       - name: Gerar o executavel (PyInstaller)
         shell: pwsh

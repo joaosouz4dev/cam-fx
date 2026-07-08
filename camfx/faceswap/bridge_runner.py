@@ -124,8 +124,10 @@ class BridgeRunner:
             swapper.models_dir = str(models_dir())
 
             import modules.globals as G
-            provs = (["CPUExecutionProvider"] if self._device == "cpu"
-                     else ["CUDAExecutionProvider", "CPUExecutionProvider"])
+            # Politica unica: swap/detector so usa CUDA ou CPU (nunca DirectML,
+            # que quebra o detector buffalo_l). Fallback CPU automatico.
+            from ..models import providers_for
+            provs = providers_for(self._device, kind="swap")
             G.execution_providers = provs
             G.source_path = self._source_path
             G.many_faces = False

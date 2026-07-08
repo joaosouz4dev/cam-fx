@@ -327,6 +327,15 @@ class Pipeline:
         with self._startstop_lock():
             if self.running:
                 return
+            # Guarda contra thread _loop zumbi: se a anterior ainda esta viva
+            # (ex.: stop() deu timeout com ela presa abrindo a camera), NAO cria
+            # uma segunda - senao duas threads _loop brigam pela camera (uma
+            # abre a camera, a outra o SwapStage, e nenhuma processa).
+            if self._thread is not None and self._thread.is_alive():
+                from .log import log as _log
+                _log("start: thread _loop anterior ainda viva; nao recria")
+                self._running.set()
+                return
             self._running.set()
             self._thread = threading.Thread(target=self._loop, daemon=True)
             self._thread.start()
@@ -371,6 +380,17 @@ class Pipeline:
             self.on_error(msg)
 
     def _loop(self) -> None:
+        # GARANTIA DEFINITIVA contra duas threads _loop concorrentes: o corpo
+        # inteiro roda sob _loop_lock. Se por qualquer caminho (restart, demand
+        # loop, corrida) uma segunda thread _loop for criada, ela ESPERA a
+        # primeira terminar antes de tocar na camera. Nunca coexistem -> fim das
+        # brigas pela webcam e do carregamento duplicado do motor.
+        if not hasattr(self, "_loop_lock"):
+            self._loop_lock = threading.Lock()
+        with self._loop_lock:
+            self._loop_body()
+
+    def _loop_body(self) -> None:
         cfg = self.config
         # O DirectShow (pygrabber/COM) exige COM inicializado NESTA thread.
         # Sem isso, a captura rapida falha com "CoInitialize nao foi chamado" e
@@ -394,6 +414,18 @@ class Pipeline:
         self._status("Abrindo camera... (pode levar alguns segundos)")
         cap, _backend = open_camera(cfg.camera_index, cfg.width, cfg.height, cfg.fps)
         self._backend = _backend
+
+        # Cancelamento: se o pipeline foi parado enquanto a camera abria (uma
+        # operacao longa), aborta AQUI - nao segue carregando o motor nem entra
+        # no loop de frames. Sem isto, uma thread parada continuava rodando e
+        # brigava pela camera com a proxima (a corrida de threads).
+        if not self.running:
+            if cap is not None:
+                try:
+                    cap.release()
+                except Exception:
+                    pass
+            return
         # Sem correcao de cor: usar a imagem pura da camera (como os outros
         # apps). Medido: a camera crua e neutra (B/R ~1.03), nao azulada; o
         # azul observado antes vinha de um build quebrado, nao da captura.
@@ -457,6 +489,21 @@ class Pipeline:
             except Exception as exc:
                 from .log import log as _log
                 _log(f"swap: falha ao criar estagio: {exc!r}")
+
+        # Cancelamento: se foi parado durante o carregamento do motor (lento),
+        # aborta antes de entrar no loop de frames.
+        if not self.running:
+            if self._swap is not None:
+                try:
+                    self._swap.close()
+                except Exception:
+                    pass
+                self._swap = None
+            try:
+                cap.release()
+            except Exception:
+                pass
+            return
 
         try:
             with CamFXVirtualCamera(fps=cfg.fps) as cam:

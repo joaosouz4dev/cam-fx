@@ -1,0 +1,265 @@
+"""Simulacao da concorrencia do Pipeline - SEM camera, SEM GPU, SEM build.
+
+O bug da Fase 3 e de THREADING (start/stop/restart/demand loop + _loop
+competindo), nao de camera/GPU. Aqui trocamos as partes lentas (open_camera,
+SwapStage, CamFXVirtualCamera, blur, framing) por FAKES rapidos com delays
+configuraveis que imitam a lentidao real (abrir camera ~2-25s, motor ~6-30s).
+
+Instrumentamos o _loop para contar quantas threads _loop rodam AO MESMO TEMPO
+(deve ser SEMPRE <=1) e detectar deadlock (o pipeline nunca chega a processar).
+
+Roda centenas de ciclos de start/stop/restart concorrente em segundos, expondo
+corridas e deadlocks que so apareceriam no app real. Uso:
+    python tools/sim_pipeline_concurrency.py
+"""
+
+import sys
+import threading
+import time
+from pathlib import Path
+from unittest import mock
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+import numpy as np  # noqa: E402
+
+
+# ---- contadores globais de diagnostico ----
+class Stats:
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.loop_active = 0        # threads _loop rodando o corpo agora
+        self.loop_max = 0           # pico simultaneo (deve ser <=1)
+        self.frames_sent = 0        # frames enviados a camera virtual fake
+        self.cam_open_conflicts = 0  # 2 caps abertos ao mesmo tempo
+        self.cams_open = 0
+
+    def enter_loop(self):
+        with self.lock:
+            self.loop_active += 1
+            self.loop_max = max(self.loop_max, self.loop_active)
+
+    def exit_loop(self):
+        with self.lock:
+            self.loop_active -= 1
+
+    def open_cam(self):
+        with self.lock:
+            self.cams_open += 1
+            if self.cams_open > 1:
+                self.cam_open_conflicts += 1
+
+    def close_cam(self):
+        with self.lock:
+            self.cams_open = max(0, self.cams_open - 1)
+
+
+STATS = Stats()
+
+# delays que imitam a lentidao real (segundos) - reduzidos p/ a sim ser rapida
+CAM_OPEN_DELAY = 0.3      # abrir camera (real ~2-25s)
+MOTOR_LOAD_DELAY = 0.5    # carregar motor DLC (real ~6-30s)
+
+
+class FakeCap:
+    """Camera fake: entrega frames pretos, conta abertura/fechamento."""
+    def __init__(self):
+        STATS.open_cam()
+        self._released = False
+
+    def read(self):
+        return True, np.zeros((720, 1280, 3), dtype=np.uint8)
+
+    def wait_warmed(self, timeout=4.0):
+        return True
+
+    def release(self):
+        if not self._released:
+            self._released = True
+            STATS.close_cam()
+
+
+def fake_open_camera(index, width=None, height=None, fps=None):
+    time.sleep(CAM_OPEN_DELAY)   # imita a lentidao de abrir a webcam
+    return FakeCap(), "DirectShow"
+
+
+class FakeSwapStage:
+    """SwapStage fake: prepare() demora (motor), process() devolve o frame."""
+    def __init__(self, *a, **k):
+        self.ready = False
+
+    def prepare(self):
+        time.sleep(MOTOR_LOAD_DELAY)   # imita carregar o motor DLC
+        self.ready = True
+        return True
+
+    def process(self, frame):
+        return frame
+
+    def close(self):
+        self.ready = False
+
+
+class FakeVCam:
+    """Camera virtual fake: conta frames enviados."""
+    def __init__(self, *a, **k):
+        self.device = "CamFX"
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def send(self, frame):
+        with STATS.lock:
+            STATS.frames_sent += 1
+
+
+class FakeEffect:
+    """blur/framing fake: passa o frame direto."""
+    def __init__(self, *a, **k):
+        self.active_provider = "fake"
+
+    def process(self, frame, *a, **k):
+        return frame
+
+    def close(self):
+        pass
+
+
+def run_sim(scenario: str, seconds: float = 8.0) -> dict:
+    """Roda um cenario e devolve as stats. Cada cenario exercita start/stop/
+    restart de um jeito diferente para expor corridas."""
+    global STATS
+    STATS = Stats()
+
+    import camfx.pipeline as P
+    from camfx.config import Config
+
+    # instrumenta o _loop_body para contar concorrencia
+    orig_body = P.Pipeline._loop_body
+
+    def counted_body(self):
+        STATS.enter_loop()
+        try:
+            orig_body(self)
+        finally:
+            STATS.exit_loop()
+
+    patches = [
+        mock.patch.object(P.Pipeline, "_loop_body", counted_body),
+        mock.patch.object(P, "open_camera", fake_open_camera),
+        mock.patch.object(P, "CamFXVirtualCamera", FakeVCam),
+        mock.patch.object(P, "BackgroundBlur", FakeEffect),
+        mock.patch.object(P, "AutoFraming", FakeEffect),
+    ]
+    # SwapStage e importado dentro do _loop (lazy); faz o patch no modulo dele
+    import camfx.faceswap.swap_stage as SS
+    patches.append(mock.patch.object(SS, "SwapStage", FakeSwapStage))
+
+    for p in patches:
+        p.start()
+    try:
+        cfg = Config.load()
+        cfg.faceswap_enabled = True
+        pipe = P.Pipeline(cfg)
+        # _use_bridge le config real; forca True para exercitar o SwapStage
+        pipe._use_bridge = lambda: True
+
+        stop_demand = threading.Event()
+
+        def demand():
+            # imita o webui._demand_loop: liga se want e nao running
+            while not stop_demand.is_set():
+                if not getattr(pipe, "_restarting", False):
+                    if not pipe.running:
+                        pipe.start()
+                time.sleep(0.1)   # agressivo (real: 1s)
+
+        t0 = time.time()
+        if scenario == "demand_only":
+            threading.Thread(target=demand, daemon=True).start()
+        elif scenario == "start_stop_spam":
+            def spam():
+                while time.time() - t0 < seconds:
+                    pipe.start(); time.sleep(0.05)
+                    pipe.stop(); time.sleep(0.05)
+            for _ in range(3):
+                threading.Thread(target=spam, daemon=True).start()
+        elif scenario == "restart_spam":
+            threading.Thread(target=demand, daemon=True).start()
+            def rspam():
+                while time.time() - t0 < seconds:
+                    time.sleep(0.3)
+                    pipe.restart()
+            for _ in range(2):
+                threading.Thread(target=rspam, daemon=True).start()
+
+        time.sleep(seconds)
+        # No restart_spam, para o spam mas deixa o demand loop rodar mais um
+        # pouco: o teste e se o pipeline ESTABILIZA e processa DEPOIS do estresse
+        # (no app real o usuario nao da restart a cada 0.3s pra sempre).
+        settle_frames_before = STATS.frames_sent
+        if scenario == "restart_spam":
+            time.sleep(3.0)   # deixa estabilizar apos o spam
+        stop_demand.set()
+        healthy = pipe.running and pipe._thread is not None \
+            and pipe._thread.is_alive()
+        pipe.stop()
+        time.sleep(0.5)
+        return {
+            "loop_max": STATS.loop_max,
+            "cam_conflicts": STATS.cam_open_conflicts,
+            "frames_sent": STATS.frames_sent,
+            "frames_after_settle": STATS.frames_sent - settle_frames_before,
+            "cams_still_open": STATS.cams_open,
+            "healthy_before_stop": healthy,
+        }
+    finally:
+        for p in patches:
+            p.stop()
+
+
+def main():
+    scenarios = ["demand_only", "start_stop_spam", "restart_spam"]
+    ok = True
+    for sc in scenarios:
+        r = run_sim(sc, seconds=8.0)
+        # criterios: nunca 2 _loop simultaneos, sem conflito de camera,
+        # camera nao fica aberta no fim, e (p/ demand/restart) chegou a enviar
+        # frames (processou).
+        max_ok = r["loop_max"] <= 1
+        cam_ok = r["cam_conflicts"] == 0 and r["cams_still_open"] == 0
+        if sc == "start_stop_spam":
+            processed = True   # so liga/desliga, nao espera processar
+        elif sc == "restart_spam":
+            # apos o estresse, deve estar saudavel E processar (estabilizou)
+            processed = r["healthy_before_stop"] and r["frames_after_settle"] > 0
+        else:
+            processed = r["frames_sent"] > 0
+        good = max_ok and cam_ok and processed
+        ok = ok and good
+        flag = "OK " if good else "FALHOU"
+        print(f"[{flag}] {sc}: loop_max={r['loop_max']} "
+              f"cam_conflicts={r['cam_conflicts']} "
+              f"cams_open_fim={r['cams_still_open']} "
+              f"frames={r['frames_sent']} "
+              f"apos_estresse={r.get('frames_after_settle','-')}")
+        if not max_ok:
+            print(f"        -> DUAS threads _loop simultaneas (corrida!)")
+        if r["cam_conflicts"]:
+            print(f"        -> camera aberta 2x ao mesmo tempo")
+        if r["cams_still_open"]:
+            print(f"        -> camera VAZOU (nao liberou no stop)")
+        if not processed:
+            print(f"        -> nao estabilizou/processou apos o estresse")
+
+    print()
+    print(">>> SIMULACAO OK <<<" if ok else ">>> SIMULACAO ACHOU PROBLEMA <<<")
+    return 0 if ok else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

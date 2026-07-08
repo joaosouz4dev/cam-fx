@@ -320,22 +320,20 @@ class Pipeline:
 
     def start(self) -> None:
         # PIPELINE UNICO (Fase 3): um so loop de captura -> [swap] -> framing ->
-        # blur -> saida. O face swap virou um ESTAGIO (SwapStage) plugado dentro
-        # do _loop quando ligado, em vez de um pipeline paralelo (BridgeRunner).
-        # Assim ha um so dono da camera, um so envio, sem os dois caminhos
-        # brigando. Serializado com stop() pelo _ss_lock.
+        # blur -> saida (o face swap e um ESTAGIO plugado, nao um pipeline
+        # paralelo). GARANTIA de thread unica: start() PRIMEIRO encerra qualquer
+        # thread _loop anterior (sinaliza running=False e faz join) e SO ENTAO
+        # cria a nova - tudo sob _ss_lock. Assim nunca ha duas threads _loop
+        # (sem precisar de lock dentro do _loop, que causava deadlock).
         with self._startstop_lock():
-            if self.running:
-                return
-            # Guarda contra thread _loop zumbi: se a anterior ainda esta viva
-            # (ex.: stop() deu timeout com ela presa abrindo a camera), NAO cria
-            # uma segunda - senao duas threads _loop brigam pela camera (uma
-            # abre a camera, a outra o SwapStage, e nenhuma processa).
-            if self._thread is not None and self._thread.is_alive():
-                from .log import log as _log
-                _log("start: thread _loop anterior ainda viva; nao recria")
-                self._running.set()
-                return
+            if self.running and self._thread is not None \
+                    and self._thread.is_alive():
+                return  # ja rodando de verdade
+            # Encerra restos de uma thread anterior antes de criar a nova.
+            if self._thread is not None:
+                self._running.clear()
+                self._thread.join(timeout=45)
+                self._thread = None
             self._running.set()
             self._thread = threading.Thread(target=self._loop, daemon=True)
             self._thread.start()
@@ -344,8 +342,9 @@ class Pipeline:
         with self._startstop_lock():
             self._running.clear()
             if self._thread:
-                # Espera a abertura lenta da camera (MSMF) terminar e a thread
-                # encerrar, evitando duas threads _loop concorrentes.
+                # Espera a thread _loop encerrar (pode estar abrindo a camera ou
+                # carregando o motor; ela checa self.running nos pontos-chave e
+                # sai). Evita duas threads _loop concorrentes.
                 self._thread.join(timeout=join_timeout)
                 self._thread = None
 
@@ -380,15 +379,7 @@ class Pipeline:
             self.on_error(msg)
 
     def _loop(self) -> None:
-        # GARANTIA DEFINITIVA contra duas threads _loop concorrentes: o corpo
-        # inteiro roda sob _loop_lock. Se por qualquer caminho (restart, demand
-        # loop, corrida) uma segunda thread _loop for criada, ela ESPERA a
-        # primeira terminar antes de tocar na camera. Nunca coexistem -> fim das
-        # brigas pela webcam e do carregamento duplicado do motor.
-        if not hasattr(self, "_loop_lock"):
-            self._loop_lock = threading.Lock()
-        with self._loop_lock:
-            self._loop_body()
+        self._loop_body()
 
     def _loop_body(self) -> None:
         cfg = self.config
@@ -541,7 +532,10 @@ class Pipeline:
                         ctypes.windll.ole32.CoUninitialize()
                     except Exception:
                         pass
-            self._running.clear()
+            # NAO limpar self._running aqui: quem controla o running e o
+            # start()/stop(). Se uma thread _loop antiga limpasse o running no
+            # finally, poderia apagar o running que um restart/start novo acabou
+            # de setar -> a thread nova saia na hora (deadlock/nao processa).
             self._status("Parado.")
 
     def _run_frames(self, cap, cam) -> None:

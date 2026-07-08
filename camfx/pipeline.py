@@ -336,9 +336,9 @@ class Pipeline:
                     device=self.config.compute_device,
                     mouth_mask=True,
                     config=self.config,
+                    on_status=self._status,   # feedback do carregamento na UI
                 )
                 self._bridge.start()
-                self._status("Troca de rosto ativa (motor Deep-Live-Cam).")
                 return
             self._thread = threading.Thread(target=self._loop, daemon=True)
             self._thread.start()

@@ -34,6 +34,18 @@ from .virtualcam import (
 )
 
 
+def pipeline_wanted(consumers: int, preview_forced: bool,
+                    faceswap_enabled: bool) -> bool:
+    """Decide se o pipeline (camera + efeitos) deve ficar ligado.
+
+    Roda se: (a) algum app consome a CamFX, (b) o preview esta ligado, ou
+    (c) o face swap esta ativo. O (c) e ESSENCIAL: sem ele, ao ligar a troca de
+    rosto o restart subia o bridge mas o demand loop o derrubava ~5s depois
+    ("demand: parando ... preview_forced=False"), deixando o app em 0 FPS sem
+    swap. Funcao pura para ser testavel (ver tools/test_demand_logic.py)."""
+    return bool(consumers > 0 or preview_forced or faceswap_enabled)
+
+
 def _ui_dir() -> Path:
     if hasattr(sys, "_MEIPASS"):
         p = Path(sys._MEIPASS) / "ui"  # type: ignore[attr-defined]
@@ -113,7 +125,9 @@ class Api:
                 consumers = self._demand_monitor.consumer_count() if self._demand_monitor else 0
             except Exception:
                 consumers = 0
-            want = consumers > 0 or self._preview_forced
+            want = pipeline_wanted(
+                consumers, self._preview_forced,
+                getattr(self.config, "faceswap_enabled", False))
             if want:
                 empty_since = None
                 if not self.pipeline.running:

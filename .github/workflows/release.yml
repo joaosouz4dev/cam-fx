@@ -85,6 +85,15 @@ jobs:
         shell: pwsh
         run: ./build_driver.ps1
 
+      - name: Testar a logica do demand loop (regressao do face swap)
+        shell: pwsh
+        run: |
+          # Trava o bug em que ligar o face swap derrubava o pipeline (0 FPS
+          # sem swap). Teste puro (sem UI/camera): se a logica regredir, o
+          # release NAO sai.
+          python tools/test_demand_logic.py
+          if ($LASTEXITCODE -ne 0) { throw "TESTE DO DEMAND LOOP FALHOU" }
+
       - name: Gerar o executavel (PyInstaller)
         shell: pwsh
         run: python build.py

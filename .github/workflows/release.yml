@@ -91,11 +91,14 @@ jobs:
 
       - name: Validar o bundle (self-check do face swap)
         shell: pwsh
+        timeout-minutes: 5
         run: |
           # Roda o exe empacotado com --selfcheck: importa toda a cadeia do
           # face swap DENTRO do bundle. Se faltar algum modulo (urllib3, joblib,
           # scipy... - o que quebrou v0.0.15/16), o exit e 1 e o release NAO sai.
-          # Impede publicar instalador quebrado.
+          # Impede publicar instalador quebrado. O selfcheck so IMPORTA (nao
+          # baixa modelo nem abre camera), entao roda rapido mesmo sem GPU; o
+          # 1o load pode levar ~1-2min pela compilacao de bytecode do bundle.
           $exe = "dist\CamFX\CamFX.exe"
           & $exe --selfcheck
           $code = $LASTEXITCODE

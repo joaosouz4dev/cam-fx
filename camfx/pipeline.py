@@ -402,15 +402,19 @@ class Pipeline:
                 pass
 
 
+        from .log import log as _log
+
         self._status("Abrindo camera... (pode levar alguns segundos)")
         cap, _backend = open_camera(cfg.camera_index, cfg.width, cfg.height, cfg.fps)
         self._backend = _backend
+        _log(f"_loop[1]: camera aberta backend={_backend} running={self.running}")
 
         # Cancelamento: se o pipeline foi parado enquanto a camera abria (uma
         # operacao longa), aborta AQUI - nao segue carregando o motor nem entra
         # no loop de frames. Sem isto, uma thread parada continuava rodando e
         # brigava pela camera com a proxima (a corrida de threads).
         if not self.running:
+            _log("_loop[1a]: cancelado apos abrir camera (running=False)")
             if cap is not None:
                 try:
                     cap.release()
@@ -435,18 +439,22 @@ class Pipeline:
         # Aguarda a camera estabilizar exposicao/white-balance antes de
         # transmitir (evita os primeiros frames escuros/azulados).
         self._status("Ajustando exposicao da camera...")
+        _log("_loop[2]: warmup da camera")
         if hasattr(cap, "wait_warmed"):
             cap.wait_warmed(timeout=4.0)
         else:
             # MSMF (cv2): descarta ~15 frames para a camera estabilizar.
             for _ in range(15):
                 cap.read()
+        _log("_loop[3]: warmup ok; carregando blur/framing")
 
         try:
-            from .log import log as _log
-
+            _log(f"_loop[3a]: criando BackgroundBlur (device={cfg.compute_device}, "
+                 f"blur_enabled={cfg.blur_enabled})")
             self._blur = (BackgroundBlur(device=cfg.compute_device)
                           if cfg.blur_enabled else None)
+            _log("_loop[3b]: BackgroundBlur ok; criando AutoFraming "
+                 f"(framing_enabled={cfg.framing_enabled})")
             self._framing = AutoFraming() if cfg.framing_enabled else None
             prov = self._blur.active_provider if self._blur else "-"
             _log(f"modelos carregados: blur={self._blur is not None} "
@@ -464,6 +472,7 @@ class Pipeline:
         # ligado com foto + termos. Carrega o motor DLC (lento ~6-10s) com
         # feedback na UI. Se falhar, o loop segue sem swap (so blur/framing).
         self._swap = None
+        _log(f"_loop[4]: use_bridge={self._use_bridge()}")
         if self._use_bridge():
             try:
                 from .faceswap.swap_stage import SwapStage
@@ -472,18 +481,22 @@ class Pipeline:
                     device=cfg.compute_device,
                     mouth_mask=True,
                     on_status=self._status,
+                    swap_model_id=getattr(cfg, "swap_model_id", None),
+                    swap_model_path=getattr(cfg, "swap_model_path", None),
                 )
-                if stage.prepare():
+                ok = stage.prepare()
+                _log(f"_loop[5]: SwapStage.prepare -> {ok}")
+                if ok:
                     self._swap = stage
                 else:
                     stage.close()
             except Exception as exc:
-                from .log import log as _log
                 _log(f"swap: falha ao criar estagio: {exc!r}")
 
         # Cancelamento: se foi parado durante o carregamento do motor (lento),
         # aborta antes de entrar no loop de frames.
         if not self.running:
+            _log("_loop[5a]: cancelado apos motor (running=False)")
             if self._swap is not None:
                 try:
                     self._swap.close()
@@ -496,8 +509,10 @@ class Pipeline:
                 pass
             return
 
+        _log("_loop[6]: abrindo camera virtual")
         try:
             with CamFXVirtualCamera(fps=cfg.fps) as cam:
+                _log(f"_loop[7]: camera virtual ok ({cam.device}); loop de frames")
                 self._status(f"Camera virtual ativa: {cam.device}")
                 self._run_frames(cap, cam)
         except RuntimeError as exc:

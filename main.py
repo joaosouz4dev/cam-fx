@@ -144,7 +144,9 @@ def _selftest_swap() -> int:
 
         t0 = time.time()
         stage = SwapStage(source_path=src,
-                          device=getattr(cfg, "compute_device", "auto"))
+                          device=getattr(cfg, "compute_device", "auto"),
+                          swap_model_id=getattr(cfg, "swap_model_id", None),
+                          swap_model_path=getattr(cfg, "swap_model_path", None))
         if not stage.prepare():
             _report("SELFTEST-SWAP: FALHOU - motor nao preparou (ver camfx.log)")
             return 1

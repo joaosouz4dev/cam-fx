@@ -29,11 +29,15 @@ class SwapStage:
     process(frame) devolve o frame com o rosto trocado; close() encerra."""
 
     def __init__(self, source_path: str, device: str = "auto",
-                 mouth_mask: bool = True, on_status=None):
+                 mouth_mask: bool = True, on_status=None,
+                 swap_model_id: str | None = None,
+                 swap_model_path: str | None = None):
         self._source_path = source_path
         self._device = device
         self._mouth_mask = mouth_mask
         self._on_status = on_status
+        self._swap_model_id = swap_model_id
+        self._swap_model_path = swap_model_path
         self.ready = False
 
         # troca de frames com o worker MTA
@@ -112,12 +116,30 @@ class SwapStage:
             G.fp_ui = {"face_enhancer": False}
 
             step("Verificando modelos de IA...", "verificando modelos")
-            ensure_faceswap_models(fp16="CUDAExecutionProvider" in provs)
+            log(f"swap[{time.time() - t0:.0f}s]: -> ensure_faceswap_models")
+            resolved_models = ensure_faceswap_models(
+                progress=self._status,
+                fp16="CUDAExecutionProvider" in provs,
+                swap_model_id=self._swap_model_id,
+                swap_model_path=self._swap_model_path,
+            )
+            selected_model = resolved_models.get("__selected__")
+            if selected_model is not None:
+                G.face_swapper_model_path = str(selected_model)
+                log(f"swap[{time.time() - t0:.0f}s]: modelo selecionado "
+                    f"{selected_model}")
+            log(f"swap[{time.time() - t0:.0f}s]: <- ensure_faceswap_models ok; "
+                "importando get_one_face")
             from modules.face_analyser import get_one_face
+            log(f"swap[{time.time() - t0:.0f}s]: get_one_face importado")
 
             step("Carregando o detector de rosto... (pode levar ~1 min)",
                  "carregando detector (buffalo_l)")
+            log(f"swap[{time.time() - t0:.0f}s]: -> 1a chamada get_one_face "
+                "(inicializa FaceAnalysis no provider)")
             src = get_one_face(cv2.imread(self._source_path))
+            log(f"swap[{time.time() - t0:.0f}s]: <- get_one_face "
+                f"(rosto={'ok' if src is not None else 'None'})")
             if src is None:
                 data = np.fromfile(self._source_path, dtype=np.uint8)
                 img = cv2.imdecode(data, cv2.IMREAD_COLOR)

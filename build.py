@@ -36,10 +36,16 @@ def main() -> int:
         f"{Path('camfx') / 'ui'}{sep}ui",
     ]
 
+    # Diretorio de saida: normalmente "dist"; pode ser trocado via env
+    # CAMFX_DISTPATH quando o "dist" padrao esta travado (ex.: Explorer aberto
+    # na pasta segura o handle e o --clean falha com WinError 32).
+    distpath = os.environ.get("CAMFX_DISTPATH", "dist")
+
     cmd = [
         sys.executable, "-m", "PyInstaller",
         "--noconfirm",
         "--clean",
+        "--distpath", distpath,
         # --onedir (NAO --onefile): no modo onefile o exe extrai o Python e as
         # DLLs para uma pasta temporaria %TEMP%\_MEIxxxx a cada execucao e a
         # apaga ao sair. Durante a auto-atualizacao (fecha e reabre o app) isso
@@ -127,8 +133,8 @@ def main() -> int:
     if result.returncode != 0:
         return result.returncode
 
-    # --onedir gera dist/CamFX/ com o exe e todas as DLLs/dados soltos.
-    app_dir = Path("dist") / "CamFX"
+    # --onedir gera <distpath>/CamFX/ com o exe e todas as DLLs/dados soltos.
+    app_dir = Path(distpath) / "CamFX"
     out = app_dir / ("CamFX.exe" if os.name == "nt" else "CamFX")
     print(f"\nApp: {out.resolve()}")
 

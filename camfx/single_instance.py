@@ -58,8 +58,8 @@ INFINITE = 0xFFFFFFFF
 
 
 def _pid_file() -> Path:
-    base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
-    return Path(base) / "CamFX" / "instance.pid"
+    from .config import data_file
+    return data_file("instance.pid")
 
 
 def _write_pid() -> None:

@@ -15,6 +15,19 @@ def config_dir() -> Path:
     return path
 
 
+def data_file(*parts: str) -> Path:
+    """Caminho de um arquivo/pasta dentro da pasta de dados do CamFX
+    (LOCALAPPDATA/CamFX), garantindo que a pasta pai exista.
+
+    Ponto unico para resolver esses caminhos - antes cada modulo (log, models,
+    single_instance, main) reimplementava `LOCALAPPDATA/CamFX + makedirs`.
+    Ex.: data_file("camfx.log"), data_file("models", "inswapper_128.onnx").
+    """
+    path = config_dir().joinpath(*parts)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 CONFIG_PATH = config_dir() / "config.json"
 
 

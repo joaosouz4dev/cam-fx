@@ -85,18 +85,33 @@ jobs:
         shell: pwsh
         run: ./build_driver.ps1
 
-      - name: Testar a logica do demand loop (regressao do face swap)
+      - name: Rodar os testes de regressao (bloqueiam o release)
         shell: pwsh
         run: |
-          # Trava o bug em que ligar o face swap derrubava o pipeline (0 FPS
-          # sem swap). Teste puro (sem UI/camera): se a logica regredir, o
-          # release NAO sai.
-          python tools/test_demand_logic.py
-          if ($LASTEXITCODE -ne 0) { throw "TESTE DO DEMAND LOOP FALHOU" }
-          python tools/test_single_instance.py
-          if ($LASTEXITCODE -ne 0) { throw "TESTE DO SINGLE INSTANCE FALHOU" }
-          python tools/test_providers.py
-          if ($LASTEXITCODE -ne 0) { throw "TESTE DA POLITICA DE PROVIDERS FALHOU" }
+          # Testes puros (sem UI/camera/GPU): se qualquer regressao aparecer, o
+          # release NAO sai. Cada um trava um bug real ja corrigido:
+          #  - demand_loop: ligar o swap derrubava o pipeline (0 FPS sem swap)
+          #  - single_instance: 2a abertura matava a 1a durante o startup lento
+          #  - providers: DirectML quebra o detector buffalo_l (so CUDA/CPU)
+          #  - faceswap_model_selection: re-download do modelo (a saga do trava)
+          #  - frame_skip: deteccao a cada N frames respeitando config/env
+          #  - frameops: fit_aspect nao estica 4:3->16:9; fix_blue_cast estavel
+          #  - sim_pipeline_concurrency: rede de protecao do threading do
+          #    pipeline (start/stop/restart/demand nunca abrem 2 loops)
+          $tests = @(
+            "tools/test_demand_logic.py",
+            "tools/test_single_instance.py",
+            "tools/test_providers.py",
+            "tools/test_faceswap_model_selection.py",
+            "tools/test_frame_skip.py",
+            "tools/test_frameops.py",
+            "tools/sim_pipeline_concurrency.py"
+          )
+          foreach ($t in $tests) {
+            Write-Host "== $t =="
+            python $t
+            if ($LASTEXITCODE -ne 0) { throw "TESTE FALHOU: $t" }
+          }
 
       - name: Gerar o executavel (PyInstaller)
         shell: pwsh

@@ -61,9 +61,9 @@ _ENHANCER_MODELS = {
 
 
 def models_dir() -> Path:
-    """Pasta local onde os modelos ficam em cache."""
-    base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
-    path = Path(base) / "CamFX" / "models"
+    """Pasta local onde os modelos ficam em cache (LOCALAPPDATA/CamFX/models)."""
+    from .config import config_dir
+    path = config_dir() / "models"
     path.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -240,8 +240,8 @@ def ensure_faceswap_models(progress=None, fp16: bool = False,
     resolved: dict[str, Path] = {}
     if url is not None and (not dest.exists() or dest.stat().st_size == 0):
         if progress:
-            progress(f"Baixando {name}...")
-        _download(url, dest, on_bytes=_bytes_cb(progress))
+            progress(f"Baixando o modelo de troca ({name})...")
+        _download(url, dest, on_bytes=_bytes_cb(progress, "o modelo de troca"))
     resolved[name] = dest
     resolved["__selected__"] = dest
     # Detector/reconhecedor buffalo_l: baixamos NOS MESMOS (com timeout e
@@ -283,7 +283,8 @@ def ensure_buffalo_l(progress=None) -> Path:
     dest_dir.parent.mkdir(parents=True, exist_ok=True)
     zip_path = dest_dir.parent / "buffalo_l.zip"
     try:
-        _download(BUFFALO_L_URL, zip_path, on_bytes=_bytes_cb(progress))
+        _download(BUFFALO_L_URL, zip_path,
+                  on_bytes=_bytes_cb(progress, "o detector de rosto"))
         if progress:
             progress("Extraindo o detector de rosto...")
         import zipfile
@@ -311,22 +312,43 @@ def ensure_enhancer_model(progress=None) -> Path:
     dest = models_dir() / name
     if not dest.exists() or dest.stat().st_size == 0:
         if progress:
-            progress(f"Baixando {name}...")
-        _download(url, dest, on_bytes=_bytes_cb(progress))
+            progress(f"Baixando o modelo de melhoria ({name})...")
+        _download(url, dest, on_bytes=_bytes_cb(progress, "o modelo de melhoria"))
     return dest
 
 
-def _bytes_cb(progress):
-    """Adapta um callback de progresso para receber (recebidos, total)."""
+def _bytes_cb(progress, label: str = ""):
+    """Adapta (recebidos, total) para o callback de status (msg: str).
+
+    Mostra "Baixando <label> X/Y MB (Z%)" - a mensagem que faltava na saga: um
+    download lento de 554 MB parecia "travado em Verificando modelos de IA...".
+    Com MB/total visiveis, da para ver que esta PROGREDINDO, nao travado.
+
+    Faz throttle: o _download chama isto a cada chunk de 256 KB (~2200 vezes num
+    arquivo de 554 MB). Atualizar a UI a cada chunk e desperdicio; so emitimos
+    quando o percentual muda OU a cada ~4 MB (quando o total e desconhecido).
+    """
     if progress is None:
         return None
+
+    mb = 1024 * 1024
+    what = f"{label} " if label else ""
+    state = {"pct": -1, "mb": -1}
 
     def cb(got, total):
         try:
             if total > 0:
-                progress(f"Baixando... {int(got * 100 / total)}%")
+                pct = int(got * 100 / total)
+                if pct == state["pct"]:
+                    return
+                state["pct"] = pct
+                progress(f"Baixando {what}{got // mb}/{total // mb} MB ({pct}%)")
             else:
-                progress(f"Baixando... {got // (1024 * 1024)} MB")
+                cur = got // (4 * mb)
+                if cur == state["mb"]:
+                    return
+                state["mb"] = cur
+                progress(f"Baixando {what}{got // mb} MB")
         except Exception:
             pass
 

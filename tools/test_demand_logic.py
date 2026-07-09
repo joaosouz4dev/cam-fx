@@ -21,16 +21,19 @@ def check(desc, got, expected):
 
 
 def main():
-    print("Cenario do BUG (o que quebrava):")
-    # preview desligado, nenhum app consumindo, MAS face swap ligado
-    check("preview=OFF, consumers=0, faceswap=ON deve MANTER o pipeline",
-          pipeline_wanted(0, False, True), True)
+    print("A camera so fica ligada se ALGUEM usa (preview ou consumer):")
+    # BUG que corrigimos: com o swap ligado, preview OFF e sem consumer, a
+    # camera ficava "gravando" (LED aceso) a toa. O face swap e config, nao
+    # demanda - nao deve manter a camera ligada sozinho.
+    check("preview=OFF, consumers=0, faceswap=ON -> DESLIGA (nao grava a toa)",
+          pipeline_wanted(0, False, True), False)
 
-    print("Cenarios que NAO podem regredir:")
-    check("preview=ON, sem swap -> liga", pipeline_wanted(0, True, False), True)
-    check("app consumindo, sem swap -> liga", pipeline_wanted(1, False, False), True)
-    check("nada ligado -> desliga", pipeline_wanted(0, False, False), False)
-    check("tudo ligado -> liga", pipeline_wanted(2, True, True), True)
+    print("Cenarios que devem manter a camera ligada:")
+    check("preview=ON -> liga", pipeline_wanted(0, True, False), True)
+    check("preview=ON + swap -> liga", pipeline_wanted(0, True, True), True)
+    check("app consumindo a CamFX -> liga", pipeline_wanted(1, False, False), True)
+    check("app consumindo + swap -> liga", pipeline_wanted(1, False, True), True)
+    check("nada usando -> desliga", pipeline_wanted(0, False, False), False)
 
     print("\n>>> TODOS OS TESTES DO DEMAND LOOP PASSARAM <<<")
     return 0

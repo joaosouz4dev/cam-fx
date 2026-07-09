@@ -35,15 +35,17 @@ from .virtualcam import (
 
 
 def pipeline_wanted(consumers: int, preview_forced: bool,
-                    faceswap_enabled: bool) -> bool:
-    """Decide se o pipeline (camera + efeitos) deve ficar ligado.
+                    faceswap_enabled: bool = False) -> bool:
+    """Decide se o pipeline (camera + efeitos) deve ficar LIGADO.
 
-    Roda se: (a) algum app consome a CamFX, (b) o preview esta ligado, ou
-    (c) o face swap esta ativo. O (c) e ESSENCIAL: sem ele, ao ligar a troca de
-    rosto o restart subia o bridge mas o demand loop o derrubava ~5s depois
-    ("demand: parando ... preview_forced=False"), deixando o app em 0 FPS sem
-    swap. Funcao pura para ser testavel (ver tools/test_demand_logic.py)."""
-    return bool(consumers > 0 or preview_forced or faceswap_enabled)
+    So fica ligado se ALGUEM esta usando a camera: (a) um app consome a CamFX,
+    ou (b) o preview esta ligado. O face swap NAO entra aqui: ele e uma
+    CONFIGURACAO (como processar), nao uma demanda - manter a camera ligada so
+    porque o swap esta ativo deixava a webcam "gravando" mesmo com o preview
+    desligado e sem nenhum app usando. O bug de "ligar o swap derruba o
+    pipeline" e resolvido no restart (que respeita o preview/consumer atuais),
+    nao mantendo a camera ligada a toa. Funcao pura, testavel."""
+    return bool(consumers > 0 or preview_forced)
 
 
 def _ui_dir() -> Path:
@@ -125,9 +127,12 @@ class Api:
                 consumers = self._demand_monitor.consumer_count() if self._demand_monitor else 0
             except Exception:
                 consumers = 0
-            want = pipeline_wanted(
-                consumers, self._preview_forced,
-                getattr(self.config, "faceswap_enabled", False))
+            want = pipeline_wanted(consumers, self._preview_forced)
+            # Nao age enquanto um restart esta em curso (entre stop e start):
+            # senao dispara um 2o _loop que briga pela camera com o restart.
+            if getattr(self.pipeline, "_restarting", False):
+                self._demand_stop.wait(1.0)
+                continue
             if want:
                 empty_since = None
                 if not self.pipeline.running:

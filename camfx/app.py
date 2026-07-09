@@ -308,13 +308,11 @@ class CamFXApp:
                 if consumers != last_state:
                     log(f"demanda: consumers={consumers} pipeline_running={self.pipeline.running}")
                     last_state = consumers
-                # Mantem a camera ligada se ha consumidor, o preview esta on OU
-                # o face swap esta ativo (senao ligar a troca de rosto subia o
-                # bridge mas este loop o derrubava logo depois).
+                # A camera so fica ligada se ha consumidor ou o preview esta on.
+                # O face swap NAO entra (senao a webcam ficava "gravando" a toa
+                # com o swap ligado e o preview desligado).
                 from .webui import pipeline_wanted
-                want_on = pipeline_wanted(
-                    consumers, self._preview_forced,
-                    getattr(self.config, "faceswap_enabled", False))
+                want_on = pipeline_wanted(consumers, self._preview_forced)
                 if want_on:
                     empty_since = None
                     if not self.pipeline.running:

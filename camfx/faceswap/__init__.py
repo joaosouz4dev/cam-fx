@@ -1,7 +1,7 @@
 """Pacote de troca de rosto (face swap) do CamFX.
 
-O face swap roda pelo BridgeRunner (camfx/faceswap/bridge_runner.py), que usa o
-motor do Deep-Live-Cam vendorizado (camfx/vendor/dlc, AGPL-3.0). O catalogo de
+O face swap roda pelo SwapStage (camfx/faceswap/swap_stage.py), plugado no
+pipeline unico. Usa o motor Deep-Live-Cam vendorizado (camfx/vendor/dlc,
 modelos fica em registry.py e o cache do rosto-fonte em source_face.py.
 
 ATENCAO LICENCA: o modelo inswapper_128 e research-only (nao comercial) e o

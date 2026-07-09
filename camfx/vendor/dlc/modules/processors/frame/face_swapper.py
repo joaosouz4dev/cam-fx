@@ -21,6 +21,7 @@ from collections import deque
 import time
 
 FACE_SWAPPER = None
+FACE_SWAPPER_MODEL_PATH = None
 THREAD_LOCK = threading.Lock()
 NAME = "DLC.FACE-SWAPPER"
 
@@ -81,15 +82,23 @@ def pre_start() -> bool:
 
 
 def get_face_swapper() -> Any:
-    global FACE_SWAPPER
+    global FACE_SWAPPER, FACE_SWAPPER_MODEL_PATH
 
     with THREAD_LOCK:
-        if FACE_SWAPPER is None:
+        model_path = getattr(modules.globals, "face_swapper_model_path", None)
+        if not model_path:
             model_name = "inswapper_128.onnx"
             if "CUDAExecutionProvider" in modules.globals.execution_providers:
                 model_name = "inswapper_128_fp16.onnx"
             model_path = os.path.join(models_dir, model_name)
+        if FACE_SWAPPER is not None and FACE_SWAPPER_MODEL_PATH != model_path:
+            FACE_SWAPPER = None
+
+        if FACE_SWAPPER is None:
             update_status(f"Loading face swapper model from: {model_path}", NAME)
+            if not os.path.exists(model_path):
+                update_status(f"Face swapper model not found: {model_path}", NAME)
+                return None
             try:
                 # Optimized provider configuration for Apple Silicon
                 providers_config = []
@@ -115,10 +124,12 @@ def get_face_swapper() -> Any:
                     model_path,
                     providers=providers_config,
                 )
+                FACE_SWAPPER_MODEL_PATH = model_path
                 update_status("Face swapper model loaded successfully.", NAME)
             except Exception as e:
                 update_status(f"Error loading face swapper model: {e}", NAME)
                 FACE_SWAPPER = None
+                FACE_SWAPPER_MODEL_PATH = None
                 return None
     return FACE_SWAPPER
 

@@ -196,24 +196,54 @@ def insightface_home() -> Path:
     return home
 
 
-def ensure_faceswap_models(progress=None, fp16: bool = False) -> dict[str, Path]:
+def _faceswap_model_spec(fp16: bool = False, swap_model_id: str | None = None,
+                         swap_model_path: str | None = None):
+    """Resolve qual modelo de swap deve existir, respeitando a configuracao."""
+    if swap_model_id == "custom":
+        if not swap_model_path:
+            raise FileNotFoundError("Modelo custom de face swap nao configurado.")
+        path = Path(swap_model_path)
+        if not path.exists() or path.stat().st_size == 0:
+            raise FileNotFoundError(f"Modelo custom nao encontrado: {path}")
+        return path.name, None, path
+
+    if swap_model_id:
+        from .faceswap import registry
+        entry = next((e for e in registry.CATALOG
+                      if e.kind == "swapper" and e.id == swap_model_id), None)
+        if entry is not None:
+            return entry.filename, entry.url, models_dir() / entry.filename
+
+    if fp16:
+        return "inswapper_128_fp16.onnx", INSWAPPER_FP16_URL, (
+            models_dir() / "inswapper_128_fp16.onnx"
+        )
+    return "inswapper_128.onnx", INSWAPPER_URL, (
+        models_dir() / "inswapper_128.onnx"
+    )
+
+
+def ensure_faceswap_models(progress=None, fp16: bool = False,
+                           swap_model_id: str | None = None,
+                           swap_model_path: str | None = None) -> dict[str, Path]:
     """Baixa os modelos de troca de rosto sob demanda. Retorna nome -> caminho.
 
     `progress` pode ser (msg: str) ou (recebidos: int, total: int).
-    `fp16=True` tambem garante o inswapper_128_fp16.onnx (motor DLC em CUDA).
+    `fp16=True` escolhe o fp16 quando nao ha modelo explicito configurado.
     """
     insightface_home()  # garante a env antes de o insightface carregar
-    to_get = dict(_FACESWAP_MODELS)
-    if fp16:
-        to_get["inswapper_128_fp16.onnx"] = INSWAPPER_FP16_URL
+    name, url, dest = _faceswap_model_spec(
+        fp16=fp16,
+        swap_model_id=swap_model_id,
+        swap_model_path=swap_model_path,
+    )
     resolved: dict[str, Path] = {}
-    for name, url in to_get.items():
-        dest = models_dir() / name
-        if not dest.exists() or dest.stat().st_size == 0:
-            if progress:
-                progress(f"Baixando {name}...")
-            _download(url, dest, on_bytes=_bytes_cb(progress))
-        resolved[name] = dest
+    if url is not None and (not dest.exists() or dest.stat().st_size == 0):
+        if progress:
+            progress(f"Baixando {name}...")
+        _download(url, dest, on_bytes=_bytes_cb(progress))
+    resolved[name] = dest
+    resolved["__selected__"] = dest
     # Detector/reconhecedor buffalo_l: baixamos NOS MESMOS (com timeout e
     # feedback), em vez de deixar o insightface baixar silenciosamente ao rodar
     # get_one_face - se aquele download travava, o app ficava preso em

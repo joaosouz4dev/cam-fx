@@ -15,13 +15,27 @@ selftest passava porque rodava sem o STA do _loop).
 
 from __future__ import annotations
 
+import os
 import threading
 import time
 
 import cv2
 import numpy as np
 
-from ..log import log
+from ..log import log, log_debug
+
+
+def _detect_every() -> int:
+    """Frequencia da deteccao de rosto (1 = todo frame). Detectar e caro
+    (RetinaFace/buffalo_l); rodar em TODO frame limita o FPS sem ganho visivel,
+    pois entre frames o rosto quase nao se move. Detectamos a cada N frames e
+    reusamos a ultima face nos intermediarios - abordagem do Deep-Live-Cam.
+    Ajustavel por CAMFX_DETECT_EVERY (padrao 3)."""
+    try:
+        n = int(os.environ.get("CAMFX_DETECT_EVERY", "3"))
+        return n if n >= 1 else 1
+    except Exception:
+        return 3
 
 
 class SwapStage:
@@ -84,7 +98,7 @@ class SwapStage:
 
         def step(status_msg: str, log_msg: str) -> None:
             self._status(status_msg)
-            log(f"swap[{time.time() - t0:.0f}s]: {log_msg}")
+            log_debug(f"swap[{time.time() - t0:.0f}s]: {log_msg}")
 
         try:
             if self._device != "cpu":
@@ -116,7 +130,7 @@ class SwapStage:
             G.fp_ui = {"face_enhancer": False}
 
             step("Verificando modelos de IA...", "verificando modelos")
-            log(f"swap[{time.time() - t0:.0f}s]: -> ensure_faceswap_models")
+            log_debug(f"swap[{time.time() - t0:.0f}s]: -> ensure_faceswap_models")
             resolved_models = ensure_faceswap_models(
                 progress=self._status,
                 fp16="CUDAExecutionProvider" in provs,
@@ -126,20 +140,19 @@ class SwapStage:
             selected_model = resolved_models.get("__selected__")
             if selected_model is not None:
                 G.face_swapper_model_path = str(selected_model)
-                log(f"swap[{time.time() - t0:.0f}s]: modelo selecionado "
-                    f"{selected_model}")
-            log(f"swap[{time.time() - t0:.0f}s]: <- ensure_faceswap_models ok; "
-                "importando get_one_face")
+                log(f"swap: modelo selecionado {selected_model}")
+            log_debug(f"swap[{time.time() - t0:.0f}s]: <- ensure_faceswap_models "
+                      "ok; importando get_one_face")
             from modules.face_analyser import get_one_face
-            log(f"swap[{time.time() - t0:.0f}s]: get_one_face importado")
+            log_debug(f"swap[{time.time() - t0:.0f}s]: get_one_face importado")
 
             step("Carregando o detector de rosto... (pode levar ~1 min)",
                  "carregando detector (buffalo_l)")
-            log(f"swap[{time.time() - t0:.0f}s]: -> 1a chamada get_one_face "
-                "(inicializa FaceAnalysis no provider)")
+            log_debug(f"swap[{time.time() - t0:.0f}s]: -> 1a chamada get_one_face "
+                      "(inicializa FaceAnalysis no provider)")
             src = get_one_face(cv2.imread(self._source_path))
-            log(f"swap[{time.time() - t0:.0f}s]: <- get_one_face "
-                f"(rosto={'ok' if src is not None else 'None'})")
+            log_debug(f"swap[{time.time() - t0:.0f}s]: <- get_one_face "
+                      f"(rosto={'ok' if src is not None else 'None'})")
             if src is None:
                 data = np.fromfile(self._source_path, dtype=np.uint8)
                 img = cv2.imdecode(data, cv2.IMREAD_COLOR)
@@ -154,7 +167,7 @@ class SwapStage:
 
             step("Carregando o modelo de troca...", "carregando inswapper")
             model = swapper.get_face_swapper()
-            log(f"swap[{time.time() - t0:.0f}s]: motor pronto, "
+            log(f"swap: motor pronto, "
                 f"provider={model.session.get_providers()[0]}")
             self._prepare_ok = True
         except Exception as exc:
@@ -168,18 +181,28 @@ class SwapStage:
         # sinaliza que o prepare terminou (pipeline libera o loop de frames)
         self._prepared.set()
 
-        # loop de trabalho: pega o ultimo frame, detecta (a cada frame) e troca.
-        # Tudo em MTA. O pipeline entrega frames via process() e le _out_frame.
+        # loop de trabalho (MTA). O pipeline entrega frames via process() e le
+        # _out_frame. Detectar o rosto e a parte cara; rodar a cada frame nao
+        # melhora o resultado (entre frames o rosto quase nao anda), so derruba
+        # o FPS. Detectamos a cada N frames e reusamos a ultima face detectada
+        # nos frames intermediarios - como o Deep-Live-Cam. Se a deteccao falhar
+        # (rosto saiu de quadro), zeramos a face para nao trocar num lugar velho.
+        detect_every = _detect_every()
+        last_face = None
+        i = 0
         while not self._stop.is_set():
             with self._lock:
                 frame = self._in_frame
             if frame is None:
                 time.sleep(0.005)
                 continue
-            try:
-                face = get_one_face(frame)
-            except Exception:
-                face = None
+            if i % detect_every == 0:
+                try:
+                    last_face = get_one_face(frame)
+                except Exception:
+                    last_face = None
+            i += 1
+            face = last_face
             out = frame
             if face is not None:
                 try:

@@ -1,14 +1,16 @@
 """Estagio de troca de rosto (face swap) para o pipeline unificado.
 
-Encapsula o motor Deep-Live-Cam (vendorizado) como um ESTAGIO plugavel:
-carrega o motor uma vez, roda deteccao de rosto ASSINCRONA (thread propria,
-para nao travar o loop principal) e expoe process(frame) -> frame com o rosto
-trocado. O pipeline unico chama isto entre a captura e o framing/blur.
+Encapsula o motor Deep-Live-Cam (vendorizado) como um ESTAGIO plugavel do
+pipeline: captura -> [SwapStage] -> framing -> blur -> saida.
 
-Substitui o BridgeRunner (que era um pipeline paralelo inteiro). Agora ha UM so
-loop de captura -> [swap] -> framing -> blur -> saida. A logica de swap (motor
-DLC puro + deteccao assincrona) e a MESMA que ficou boa na ponte; so deixou de
-ter captura/envio proprios (que duplicavam o pipeline).
+CRITICO - COM/THREAD: o onnxruntime CUDA do motor DLC TRAVA se rodar numa thread
+com COM em STA (apartment). O _loop do pipeline inicializa COM em STA (exigido
+pelo DirectShow/pygrabber da captura). Por isso o SwapStage roda TODO o trabalho
+do motor (carregar + detectar + trocar) numa THREAD WORKER PROPRIA com
+CoInitializeEx MTA - exatamente como a ponte que funcionava. O process() apenas
+troca frames com esse worker (envia o frame cru, recebe o frame trocado); o
+worker faz o swap em MTA. Sem isso, o app trava em "carregando o motor" (o
+selftest passava porque rodava sem o STA do _loop).
 """
 
 from __future__ import annotations
@@ -23,8 +25,8 @@ from ..log import log
 
 
 class SwapStage:
-    """Estagio de face swap. prepare() carrega o motor; process(frame) troca o
-    rosto. close() libera. A deteccao roda numa thread propria (assincrona)."""
+    """Estagio de face swap. prepare() sobe o worker MTA e carrega o motor;
+    process(frame) devolve o frame com o rosto trocado; close() encerra."""
 
     def __init__(self, source_path: str, device: str = "auto",
                  mouth_mask: bool = True, on_status=None):
@@ -32,16 +34,17 @@ class SwapStage:
         self._device = device
         self._mouth_mask = mouth_mask
         self._on_status = on_status
-        self._swapper = None
-        self._source_face = None
-        self._get_one_face = None
         self.ready = False
-        # deteccao assincrona
-        self._det_lock = threading.Lock()
-        self._latest = None
-        self._face = None
-        self._det_stop = threading.Event()
-        self._det_thread = None
+
+        # troca de frames com o worker MTA
+        self._lock = threading.Lock()
+        self._in_frame = None       # frame cru a processar (do pipeline)
+        self._out_frame = None      # ultimo frame trocado (para o pipeline)
+        self._face = None           # ultimo rosto detectado (assincrono)
+        self._stop = threading.Event()
+        self._prepared = threading.Event()   # sinaliza fim do prepare
+        self._prepare_ok = False
+        self._worker = None
 
     def _status(self, msg: str) -> None:
         if self._on_status:
@@ -51,10 +54,28 @@ class SwapStage:
                 pass
 
     def prepare(self) -> bool:
-        """Carrega o motor DLC + detector + foto-fonte. Retorna True se pronto.
+        """Sobe a thread worker MTA e espera o motor carregar. True se pronto."""
+        self._worker = threading.Thread(target=self._worker_loop, daemon=True)
+        self._worker.start()
+        # espera o worker terminar de carregar o motor (ou falhar). Timeout
+        # generoso: o 1o load CUDA pode levar ~30s.
+        self._prepared.wait(timeout=180)
+        self.ready = self._prepare_ok
+        return self._prepare_ok
 
-        Loga cada etapa com tempo (t0) - o 1o carregamento (detector + inswapper
-        no CUDA) leva ~6-10s. Sem isso a UI parece travada."""
+    def _worker_loop(self) -> None:
+        """Roda em MTA: carrega o motor, detecta e troca o rosto. Um so lugar
+        que toca no onnxruntime CUDA - fora do STA do _loop."""
+        # COM em MTA (0x0) - obrigatorio para o onnxruntime CUDA nesta thread.
+        try:
+            import ctypes
+            ctypes.windll.ole32.CoInitializeEx(None, 0x0)
+        except Exception:
+            pass
+
+        swapper = None
+        source_face = None
+        get_one_face = None
         t0 = time.time()
 
         def step(status_msg: str, log_msg: str) -> None:
@@ -93,7 +114,6 @@ class SwapStage:
             step("Verificando modelos de IA...", "verificando modelos")
             ensure_faceswap_models(fp16="CUDAExecutionProvider" in provs)
             from modules.face_analyser import get_one_face
-            self._get_one_face = get_one_face
 
             step("Carregando o detector de rosto... (pode levar ~1 min)",
                  "carregando detector (buffalo_l)")
@@ -105,69 +125,65 @@ class SwapStage:
             if src is None:
                 log("swap: nenhum rosto na foto-fonte")
                 self._status("Nenhum rosto encontrado na foto escolhida.")
-                return False
-            self._source_face = src
+                self._prepare_ok = False
+                self._prepared.set()
+                return
+            source_face = src
 
             step("Carregando o modelo de troca...", "carregando inswapper")
             model = swapper.get_face_swapper()
-            self._swapper = swapper
             log(f"swap[{time.time() - t0:.0f}s]: motor pronto, "
                 f"provider={model.session.get_providers()[0]}")
-
-            # thread de deteccao assincrona
-            self._det_thread = threading.Thread(target=self._det_loop, daemon=True)
-            self._det_thread.start()
-            self.ready = True
-            return True
+            self._prepare_ok = True
         except Exception as exc:
             import traceback
             log(f"swap: falha ao preparar motor: {exc!r}\n{traceback.format_exc()}")
             self._status("Falha ao preparar a troca de rosto.")
-            return False
+            self._prepare_ok = False
+            self._prepared.set()
+            return
 
-    def _det_loop(self) -> None:
-        try:
-            import ctypes
-            ctypes.windll.ole32.CoInitializeEx(None, 0x0)
-        except Exception:
-            pass
-        while not self._det_stop.is_set():
-            with self._det_lock:
-                f = self._latest
-            if f is None:
+        # sinaliza que o prepare terminou (pipeline libera o loop de frames)
+        self._prepared.set()
+
+        # loop de trabalho: pega o ultimo frame, detecta (a cada frame) e troca.
+        # Tudo em MTA. O pipeline entrega frames via process() e le _out_frame.
+        while not self._stop.is_set():
+            with self._lock:
+                frame = self._in_frame
+            if frame is None:
                 time.sleep(0.005)
                 continue
             try:
-                face = self._get_one_face(f)
+                face = get_one_face(frame)
             except Exception:
                 face = None
-            with self._det_lock:
-                self._face = face
+            out = frame
+            if face is not None:
+                try:
+                    out = swapper.swap_face(source_face, face, frame)
+                    out = swapper.apply_post_processing(
+                        out, [face.bbox.astype(int)])
+                except Exception as exc:
+                    log(f"swap: erro no swap: {exc!r}")
+                    out = frame
+            with self._lock:
+                self._out_frame = out
 
     def process(self, frame):
-        """Troca o rosto no frame (usa o ultimo rosto detectado, assincrono).
-        Se ainda nao ha rosto detectado, retorna o frame original."""
-        if not self.ready or self._swapper is None:
+        """Entrega o frame cru ao worker MTA e devolve o ultimo frame trocado.
+        Nao bloqueia: se o worker ainda nao produziu, devolve o frame atual
+        (assim o pipeline nunca trava esperando o swap)."""
+        if not self.ready:
             return frame
-        with self._det_lock:
-            self._latest = frame
-            tface = self._face
-        if tface is None:
-            return frame
-        try:
-            out = self._swapper.swap_face(self._source_face, tface, frame)
-            out = self._swapper.apply_post_processing(
-                out, [tface.bbox.astype(int)])
-            return out
-        except Exception as exc:
-            log(f"swap: erro no swap: {exc!r}")
-            return frame
+        with self._lock:
+            self._in_frame = frame
+            out = self._out_frame
+        return out if out is not None else frame
 
     def close(self) -> None:
-        self._det_stop.set()
-        if self._det_thread is not None:
-            self._det_thread.join(timeout=2)
-            self._det_thread = None
+        self._stop.set()
+        if self._worker is not None:
+            self._worker.join(timeout=3)
+            self._worker = None
         self.ready = False
-        self._swapper = None
-        self._source_face = None

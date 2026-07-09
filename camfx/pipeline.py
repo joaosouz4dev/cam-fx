@@ -505,6 +505,12 @@ class Pipeline:
                 "Camera virtual indisponivel. O driver CamFX pode nao estar "
                 f"registrado. Reinstale o CamFX. Detalhe: {exc}"
             )
+        except Exception as exc:
+            import traceback
+            from .log import log as _log
+            _log(f"_loop: erro no _run_frames/vcam: {exc!r}\n"
+                 f"{traceback.format_exc()}")
+            self._error(f"Erro no pipeline: {exc}")
         finally:
             cap.release()
             # Fecha os modelos sob o mesmo lock do processamento, para nunca

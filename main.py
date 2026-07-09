@@ -26,14 +26,20 @@ except Exception:
     pass
 
 
-def _crash_path():
+def _camfx_dir():
+    """Pasta de dados do CamFX. Definida localmente (sem importar camfx.*) para
+    o log de startup funcionar mesmo se um import de camfx falhar cedo."""
     base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
     d = os.path.join(base, "CamFX")
     try:
         os.makedirs(d, exist_ok=True)
     except Exception:
         pass
-    return os.path.join(d, "startup.log")
+    return d
+
+
+def _crash_path():
+    return os.path.join(_camfx_dir(), "startup.log")
 
 
 def _write_startup(msg):
@@ -75,10 +81,8 @@ def _selfcheck() -> int:
     def _report(msg: str) -> None:
         print(msg)
         try:
-            base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
-            d = os.path.join(base, "CamFX")
-            os.makedirs(d, exist_ok=True)
-            with open(os.path.join(d, "selfcheck.txt"), "w", encoding="utf-8") as f:
+            with open(os.path.join(_camfx_dir(), "selfcheck.txt"), "w",
+                      encoding="utf-8") as f:
                 f.write(msg + "\n")
         except Exception:
             pass
@@ -121,10 +125,8 @@ def _selftest_swap() -> int:
     def _report(msg: str) -> None:
         print(msg)
         try:
-            base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
-            d = os.path.join(base, "CamFX")
-            os.makedirs(d, exist_ok=True)
-            with open(os.path.join(d, "selftest_swap.txt"), "w", encoding="utf-8") as f:
+            with open(os.path.join(_camfx_dir(), "selftest_swap.txt"), "w",
+                      encoding="utf-8") as f:
                 f.write(msg + "\n")
         except Exception:
             pass

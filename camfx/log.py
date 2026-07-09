@@ -29,10 +29,8 @@ def _fallback(msg: str) -> None:
     """Ultimo recurso quando nem o camfx.log aceita a escrita: grava no
     startup.log (mesma pasta do log de startup do main). Nunca levanta."""
     try:
-        base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
-        d = Path(base) / "CamFX"
-        d.mkdir(parents=True, exist_ok=True)
-        with open(d / "startup.log", "a", encoding="utf-8") as f:
+        from .config import data_file
+        with open(data_file("startup.log"), "a", encoding="utf-8") as f:
             f.write(f"[log-fallback] {msg}\n")
     except Exception:
         pass

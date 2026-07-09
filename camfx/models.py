@@ -61,9 +61,9 @@ _ENHANCER_MODELS = {
 
 
 def models_dir() -> Path:
-    """Pasta local onde os modelos ficam em cache."""
-    base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
-    path = Path(base) / "CamFX" / "models"
+    """Pasta local onde os modelos ficam em cache (LOCALAPPDATA/CamFX/models)."""
+    from .config import config_dir
+    path = config_dir() / "models"
     path.mkdir(parents=True, exist_ok=True)
     return path
 

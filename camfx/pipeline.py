@@ -232,6 +232,7 @@ class Pipeline:
                     on_status=self._status,
                     swap_model_id=getattr(cfg, "swap_model_id", None),
                     swap_model_path=getattr(cfg, "swap_model_path", None),
+                    detect_every=getattr(cfg, "faceswap_detect_every", 3),
                 )
                 ok = stage.prepare()
                 _dbg(f"_loop[5]: SwapStage.prepare -> {ok}")

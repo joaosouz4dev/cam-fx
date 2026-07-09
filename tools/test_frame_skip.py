@@ -23,19 +23,25 @@ def check(desc, cond):
 
 
 def main():
-    print("Leitura de CAMFX_DETECT_EVERY:")
+    print("Base vem da config; a env CAMFX_DETECT_EVERY tem prioridade:")
     os.environ.pop("CAMFX_DETECT_EVERY", None)
-    check("sem env -> padrao 3", _detect_every() == 3)
+    check("sem env, base padrao -> 3", _detect_every() == 3)
+    check("sem env, base=2 (config) -> 2", _detect_every(2) == 2)
+    check("sem env, base=1 (config) -> 1", _detect_every(1) == 1)
+    check("sem env, base=0 (config invalida) -> clampa para 1",
+          _detect_every(0) == 1)
     os.environ["CAMFX_DETECT_EVERY"] = "5"
-    check("env=5 -> 5", _detect_every() == 5)
+    check("env=5 sobrepoe a base=2 -> 5", _detect_every(2) == 5)
     os.environ["CAMFX_DETECT_EVERY"] = "1"
-    check("env=1 -> 1 (detecta todo frame)", _detect_every() == 1)
+    check("env=1 -> 1 (detecta todo frame)", _detect_every(4) == 1)
     os.environ["CAMFX_DETECT_EVERY"] = "0"
     check("env=0 (invalido) -> clampa para 1", _detect_every() == 1)
     os.environ["CAMFX_DETECT_EVERY"] = "-2"
     check("env negativo -> clampa para 1", _detect_every() == 1)
     os.environ["CAMFX_DETECT_EVERY"] = "lixo"
-    check("env nao-numerica -> fallback 3", _detect_every() == 3)
+    check("env nao-numerica -> cai na base (3)", _detect_every() == 3)
+    os.environ["CAMFX_DETECT_EVERY"] = "lixo"
+    check("env nao-numerica -> cai na base (config=2)", _detect_every(2) == 2)
     os.environ.pop("CAMFX_DETECT_EVERY", None)
 
     print("Padrao de deteccao (detecta a cada N, reusa nos intermediarios):")

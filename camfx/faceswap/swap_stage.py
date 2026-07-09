@@ -25,17 +25,24 @@ import numpy as np
 from ..log import log, log_debug
 
 
-def _detect_every() -> int:
+def _detect_every(base: int = 3) -> int:
     """Frequencia da deteccao de rosto (1 = todo frame). Detectar e caro
     (RetinaFace/buffalo_l); rodar em TODO frame limita o FPS sem ganho visivel,
     pois entre frames o rosto quase nao se move. Detectamos a cada N frames e
     reusamos a ultima face nos intermediarios - abordagem do Deep-Live-Cam.
-    Ajustavel por CAMFX_DETECT_EVERY (padrao 3)."""
-    try:
-        n = int(os.environ.get("CAMFX_DETECT_EVERY", "3"))
-        return n if n >= 1 else 1
-    except Exception:
-        return 3
+
+    `base` vem da config (faceswap_detect_every). A env CAMFX_DETECT_EVERY, se
+    definida, tem prioridade (override para testes/ajuste sem mexer na config).
+    Valor final e sempre >= 1."""
+    val = os.environ.get("CAMFX_DETECT_EVERY")
+    if val is None:
+        n = base
+    else:
+        try:
+            n = int(val)
+        except (TypeError, ValueError):
+            n = base
+    return n if n >= 1 else 1
 
 
 class SwapStage:
@@ -45,13 +52,15 @@ class SwapStage:
     def __init__(self, source_path: str, device: str = "auto",
                  mouth_mask: bool = True, on_status=None,
                  swap_model_id: str | None = None,
-                 swap_model_path: str | None = None):
+                 swap_model_path: str | None = None,
+                 detect_every: int = 3):
         self._source_path = source_path
         self._device = device
         self._mouth_mask = mouth_mask
         self._on_status = on_status
         self._swap_model_id = swap_model_id
         self._swap_model_path = swap_model_path
+        self._detect_every = _detect_every(detect_every)
         self.ready = False
 
         # troca de frames com o worker MTA
@@ -187,7 +196,7 @@ class SwapStage:
         # o FPS. Detectamos a cada N frames e reusamos a ultima face detectada
         # nos frames intermediarios - como o Deep-Live-Cam. Se a deteccao falhar
         # (rosto saiu de quadro), zeramos a face para nao trocar num lugar velho.
-        detect_every = _detect_every()
+        detect_every = self._detect_every
         last_face = None
         i = 0
         while not self._stop.is_set():

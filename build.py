@@ -119,7 +119,7 @@ def main() -> int:
         # CUDAExecutionProvider nao carrega no PC do usuario. --collect-all
         # pega binarios + dados de cada pacote nvidia presente.
         for nv in ("nvidia.cudnn", "nvidia.cublas", "nvidia.cuda_nvrtc",
-                   "nvidia.cuda_runtime"):
+                   "nvidia.cuda_runtime", "nvidia.cufft", "nvidia.nvjitlink"):
             if importlib.util.find_spec(nv) is not None:
                 cmd += ["--collect-all", nv]
         print("Incluindo face swap (insightface + motor DLC + CUDA) no bundle.")

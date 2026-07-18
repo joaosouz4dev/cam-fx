@@ -138,7 +138,8 @@ def enable_cuda_dlls() -> bool:
     # 2) Exe empacotado (PyInstaller): as DLLs coletadas ficam no _MEIPASS e/ou
     # na pasta do exe. Adiciona qualquer pasta que contenha cudnn/cublas.
     for root in _bundle_dirs():
-        for dll in ("cudnn64_*.dll", "cublas64_*.dll", "cublasLt64_*.dll"):
+        for dll in ("cudnn64_*.dll", "cublas64_*.dll", "cublasLt64_*.dll",
+                    "cufft64_*.dll"):
             for hit in glob.glob(str(root / "**" / dll), recursive=True):
                 d = str(Path(hit).parent)
                 if d not in found:

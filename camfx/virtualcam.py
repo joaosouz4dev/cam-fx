@@ -139,7 +139,8 @@ def is_driver_registered() -> bool:
     try:
         from pygrabber.dshow_graph import FilterGraph
 
-        return "CamFX" in FilterGraph().get_input_devices()
+        devices = FilterGraph().get_input_devices()
+        return any("camfx" in (d or "").lower() for d in devices)
     except Exception:
         return False
 

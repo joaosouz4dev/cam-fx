@@ -28,17 +28,33 @@ function Assert-Admin {
     $id = [Security.Principal.WindowsIdentity]::GetCurrent()
     $p = New-Object Security.Principal.WindowsPrincipal($id)
     if (-not $p.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-        Write-Host "PRECISA DE ADMIN. Abra o PowerShell como administrador e rode de novo." -ForegroundColor Red
+        Write-Host "=============================================================" -ForegroundColor Red
+        Write-Host " PRECISA DE ADMINISTRADOR para registrar a camera no sistema." -ForegroundColor Red
+        Write-Host " Feche este terminal e abra o PowerShell COMO ADMINISTRADOR:" -ForegroundColor Yellow
+        Write-Host "   menu Iniciar -> digite 'PowerShell' -> botao direito ->" -ForegroundColor Yellow
+        Write-Host "   'Executar como administrador'. Depois rode de novo:" -ForegroundColor Yellow
+        Write-Host "   cd $root" -ForegroundColor Yellow
+        Write-Host "   pwsh -File tools\install_and_test_driver.ps1" -ForegroundColor Yellow
+        Write-Host "=============================================================" -ForegroundColor Red
         exit 1
     }
+}
+
+# regsvr32 e um app GUI: nao seta $LASTEXITCODE nem bloqueia sem -Wait, e mostra
+# erros num popup. Rodamos com Start-Process -Wait -PassThru para pegar o
+# ExitCode de verdade e /s (silent) para nao abrir popup.
+function Invoke-Regsvr32 {
+    param([string]$Args)
+    $p = Start-Process -FilePath "regsvr32.exe" -ArgumentList $Args -Wait -PassThru -WindowStyle Hidden
+    return $p.ExitCode
 }
 
 if ($Uninstall) {
     Assert-Admin
     Write-Host "=== desregistrando o driver CamFX de teste ===" -ForegroundColor Cyan
     Get-Process camfx_vcam -ErrorAction SilentlyContinue | ForEach-Object { try { $_.Kill() } catch {} }
-    & regsvr32 /u /s $dll
-    Write-Host "Driver desregistrado. (a camera 'CamFX' some do sistema)"
+    $code = Invoke-Regsvr32 "/u /s `"$dll`""
+    Write-Host "Driver desregistrado (exit=$code). A camera 'CamFX' some do sistema."
     exit 0
 }
 
@@ -55,9 +71,16 @@ New-Item -ItemType Directory -Force -Path "C:\ProgramData\CamFX" | Out-Null
 Set-Content -Path $log -Value "=== teste $(Get-Date -Format 'HH:mm:ss') ===" -ErrorAction SilentlyContinue
 
 Write-Host "=== 1) registrando a DLL nova (regsvr32) ===" -ForegroundColor Cyan
-& regsvr32 /s $dll
-if ($LASTEXITCODE -ne 0) { Write-Host "regsvr32 falhou (exit $LASTEXITCODE)" -ForegroundColor Red; exit 1 }
-Write-Host "  DLL registrada."
+$code = Invoke-Regsvr32 "/s `"$dll`""
+if ($code -ne 0) {
+    Write-Host "regsvr32 FALHOU (exit=$code)." -ForegroundColor Red
+    Write-Host "Causas comuns:" -ForegroundColor Yellow
+    Write-Host "  - exit 5 = acesso negado: NAO esta como admin (abra o PowerShell como administrador)."
+    Write-Host "  - exit 3/0x80070005 = DLL ja registrada por outra versao: desregistre antes com -Uninstall."
+    Write-Host "  - erro de DllRegisterServer: a DLL nao exporta o registro (build incompleto)."
+    exit 1
+}
+Write-Host "  DLL registrada (exit=0)."
 
 Write-Host "=== 2) escrevendo um frame de teste 1080p pelo Python ===" -ForegroundColor Cyan
 $py = Join-Path $root ".venv\Scripts\python.exe"

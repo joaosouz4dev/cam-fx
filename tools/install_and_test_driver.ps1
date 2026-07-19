@@ -42,10 +42,12 @@ function Assert-Admin {
 
 # regsvr32 e um app GUI: nao seta $LASTEXITCODE nem bloqueia sem -Wait, e mostra
 # erros num popup. Rodamos com Start-Process -Wait -PassThru para pegar o
-# ExitCode de verdade e /s (silent) para nao abrir popup.
+# ExitCode de verdade. Passamos os argumentos como ARRAY (nao string) e evitamos
+# o nome $Args, que e uma variavel AUTOMATICA do PowerShell (por isso o regsvr32
+# recebia args vazios -> "forneca um nome binario").
 function Invoke-Regsvr32 {
-    param([string]$Args)
-    $p = Start-Process -FilePath "regsvr32.exe" -ArgumentList $Args -Wait -PassThru -WindowStyle Hidden
+    param([string[]]$RegArgs)
+    $p = Start-Process -FilePath "regsvr32.exe" -ArgumentList $RegArgs -Wait -PassThru -WindowStyle Hidden
     return $p.ExitCode
 }
 
@@ -53,7 +55,7 @@ if ($Uninstall) {
     Assert-Admin
     Write-Host "=== desregistrando o driver CamFX de teste ===" -ForegroundColor Cyan
     Get-Process camfx_vcam -ErrorAction SilentlyContinue | ForEach-Object { try { $_.Kill() } catch {} }
-    $code = Invoke-Regsvr32 "/u /s `"$dll`""
+    $code = Invoke-Regsvr32 @("/u", "/s", $dll)
     Write-Host "Driver desregistrado (exit=$code). A camera 'CamFX' some do sistema."
     exit 0
 }
@@ -71,7 +73,7 @@ New-Item -ItemType Directory -Force -Path "C:\ProgramData\CamFX" | Out-Null
 Set-Content -Path $log -Value "=== teste $(Get-Date -Format 'HH:mm:ss') ===" -ErrorAction SilentlyContinue
 
 Write-Host "=== 1) registrando a DLL nova (regsvr32) ===" -ForegroundColor Cyan
-$code = Invoke-Regsvr32 "/s `"$dll`""
+$code = Invoke-Regsvr32 @("/s", $dll)
 if ($code -ne 0) {
     Write-Host "regsvr32 FALHOU (exit=$code)." -ForegroundColor Red
     Write-Host "Causas comuns:" -ForegroundColor Yellow

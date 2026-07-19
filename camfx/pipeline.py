@@ -55,6 +55,19 @@ class Pipeline:
         self._run_token = None
         self.effects_status = ""
         self._swap_load_lock = threading.Lock()
+        # Ultimo frame JA processado (o mesmo enviado a camera virtual), para o
+        # preview da UI ler direto da MEMORIA em vez de reabrir e reler o arquivo
+        # de 2.7 MB do disco a cada tick. _preview_seq incrementa a cada frame
+        # novo, para o preview so recomprimir JPEG quando ha frame realmente novo.
+        self._preview_lock = threading.Lock()
+        self._preview_frame = None
+        self._preview_seq = 0
+
+    def latest_preview(self):
+        """(frame_bgr, seq) do ultimo frame processado, ou (None, seq). O
+        preview da UI usa isto em vez de reler o arquivo compartilhado."""
+        with self._preview_lock:
+            return self._preview_frame, self._preview_seq
 
     @property
     def running(self) -> bool:
@@ -282,6 +295,9 @@ class Pipeline:
                 if self._framing:
                     self._framing.close()
                     self._framing = None
+            # Limpa o buffer de preview: parou o pipeline, nao mostrar frame velho.
+            with self._preview_lock:
+                self._preview_frame = None
             if _com_initialized:
                 try:
                     import pythoncom
@@ -635,6 +651,13 @@ class Pipeline:
                     _t["send"] += time.perf_counter() - _s
                     _processed += 1
                 last_good = frame
+                # Publica o frame processado para o preview da UI ler da memoria
+                # (sem reabrir o arquivo). So guarda a referencia - o resize/JPEG
+                # so acontece se a UI pedir (get_preview_frame), e no maximo na
+                # taxa do preview, nao na do pipeline.
+                with self._preview_lock:
+                    self._preview_frame = frame
+                    self._preview_seq += 1
                 # Sem sleep: o ritmo ja e ditado pela chegada de frames novos da
                 # camera (so processamos quando seq muda). Dormir aqui so somaria
                 # latencia ("arrastado").

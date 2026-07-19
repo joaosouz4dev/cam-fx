@@ -66,6 +66,11 @@ class Api:
         self._cameras = list_cameras() or [(self.config.camera_index, "Camera 0")]
         self._cam_indices = [i for i, _ in self._cameras]
         self._preview_forced = False
+        # Cache do preview: guarda o ultimo JPEG e o seq que o gerou. Se a UI
+        # pedir de novo e o pipeline nao produziu frame novo, devolve o cache
+        # sem reprocessar - corta resize+imencode+base64 dos ticks repetidos.
+        self._preview_cache = None
+        self._preview_cache_seq = -1
         self._window = None
         self._vcam_host = None
         self._demand_monitor = None
@@ -483,25 +488,32 @@ class Api:
             self.pipeline.start()
 
     def get_preview_frame(self):
-        """Retorna o ultimo frame da CamFX como data URL (JPEG base64)."""
+        """Retorna o ultimo frame processado como data URL (JPEG base64).
+
+        Le o frame direto da MEMORIA do pipeline (nao reabre o arquivo de 2.7 MB
+        do disco a cada tick) e CACHEIA o JPEG por seq: se o pipeline nao produziu
+        frame novo desde a ultima chamada, devolve o cache sem reprocessar. So
+        recomprime quando ha frame realmente novo - corta a maior parte do custo
+        do preview, que rodava resize+imencode+base64 8x/s mesmo parado."""
         try:
-            import os
-            if not os.path.exists(FRAME_FILE):
+            frame, seq = self.pipeline.latest_preview()
+            if frame is None:
                 return None
-            with open(FRAME_FILE, "rb") as f:
-                data = f.read(TOTAL_BYTES)
-            if len(data) < TOTAL_BYTES:
-                return None
-            if struct.unpack("<i", data[0:4])[0] != 0x43414D46:
-                return None
-            import numpy as np, cv2
-            arr = np.frombuffer(data[_HEADER_SIZE:TOTAL_BYTES], dtype=np.uint8)
-            arr = arr.reshape((HEIGHT, WIDTH, 3))
-            small = cv2.resize(arr, (WIDTH // 2, HEIGHT // 2))
-            ok, buf = cv2.imencode(".jpg", small, [cv2.IMWRITE_JPEG_QUALITY, 70])
+            # frame novo? senao devolve o cache (sem resize/imencode/base64).
+            if seq == self._preview_cache_seq and self._preview_cache is not None:
+                return self._preview_cache
+            import cv2
+            h, w = frame.shape[:2]
+            # Miniatura de janela: 1/3 do 720p (~427x240). Menos pixels no resize,
+            # no imencode e no base64 que trafega pela ponte pywebview->JS.
+            small = cv2.resize(frame, (w // 3, h // 3))
+            ok, buf = cv2.imencode(".jpg", small, [cv2.IMWRITE_JPEG_QUALITY, 65])
             if not ok:
                 return None
-            return "data:image/jpeg;base64," + base64.b64encode(buf).decode("ascii")
+            out = "data:image/jpeg;base64," + base64.b64encode(buf).decode("ascii")
+            self._preview_cache = out
+            self._preview_cache_seq = seq
+            return out
         except Exception:
             return None
 

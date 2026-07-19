@@ -4,10 +4,21 @@
 #pragma once
 #include <windows.h>
 
+// Resolucao DINAMICA: cada frame carrega width/height reais no header. O
+// buffer compartilhado tem sempre o tamanho MAXIMO (1080p); um frame usa so os
+// primeiros width*height*3 bytes. CAMFX_WIDTH/HEIGHT sao o default/legado; o
+// tamanho do arquivo mapeado e CAMFX_MAX_FRAME_BYTES. Precisa bater com
+// MAX_WIDTH/MAX_HEIGHT em camfx/virtualcam.py.
 #define CAMFX_WIDTH   1280
 #define CAMFX_HEIGHT  720
 #define CAMFX_FPS     30
-#define CAMFX_FRAME_BYTES (CAMFX_WIDTH * CAMFX_HEIGHT * 3)   // BGR24
+
+#define CAMFX_MAX_WIDTH   1920
+#define CAMFX_MAX_HEIGHT  1080
+#define CAMFX_MAX_FRAME_BYTES (CAMFX_MAX_WIDTH * CAMFX_MAX_HEIGHT * 3)   // BGR24
+
+// Legado (compat de nome): alguns lugares referenciam CAMFX_FRAME_BYTES.
+#define CAMFX_FRAME_BYTES (CAMFX_WIDTH * CAMFX_HEIGHT * 3)
 
 // IPC por ARQUIVO MAPEADO (nao memoria pura). O source DLL roda no Frame Server
 // (svchost, Local Service) e o app na sessao do usuario; um arquivo em
@@ -29,4 +40,5 @@ struct CamFXSharedHeader {
 #pragma pack(pop)
 
 #define CAMFX_MAGIC 0x43414D46  // 'CAMF'
-#define CAMFX_SHMEM_BYTES (sizeof(CamFXSharedHeader) + CAMFX_FRAME_BYTES)
+// O arquivo mapeado tem sempre o tamanho MAXIMO (comporta ate 1080p).
+#define CAMFX_SHMEM_BYTES (sizeof(CamFXSharedHeader) + CAMFX_MAX_FRAME_BYTES)

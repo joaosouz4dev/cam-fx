@@ -19,17 +19,29 @@ import struct
 
 import numpy as np
 
+# RESOLUCAO DINAMICA: a saida acompanha a resolucao real da camera (nao mais
+# fixa em 720p, que rebaixava cameras 1080p). O buffer compartilhado e
+# dimensionado pelo MAXIMO suportado (1080p); cada frame grava sua largura/
+# altura REAIS no header, e o driver C++ le width/height do header para saber
+# o tamanho do frame corrente. WIDTH/HEIGHT abaixo sao o DEFAULT/legado; o
+# tamanho do buffer e MAX_*.
 WIDTH = 1280
 HEIGHT = 720
 BPP = 3
-FRAME_BYTES = WIDTH * HEIGHT * BPP
+
+# Teto do buffer compartilhado. Precisa bater com CAMFX_MAX_* em CamFXShared.h.
+MAX_WIDTH = 1920
+MAX_HEIGHT = 1080
+MAX_FRAME_BYTES = MAX_WIDTH * MAX_HEIGHT * BPP
 
 # struct CamFXSharedHeader: LONG magic, LONG width, LONG height, LONG frame_seq,
 # LONGLONG ts_qpc, LONG consumers  -> 4 int32 + int64 + int32 = 28 bytes (pack 1).
 _HEADER_FMT = "<iiiiqi"
 _HEADER_SIZE = struct.calcsize(_HEADER_FMT)
 _CONSUMERS_OFFSET = struct.calcsize("<iiiiq")
-TOTAL_BYTES = _HEADER_SIZE + FRAME_BYTES
+# O arquivo mapeado tem sempre o tamanho MAXIMO; cada frame usa so os primeiros
+# width*height*3 bytes apos o header.
+TOTAL_BYTES = _HEADER_SIZE + MAX_FRAME_BYTES
 
 MAGIC = 0x43414D46  # 'CAMF'
 
@@ -39,18 +51,25 @@ FRAME_FILE = os.path.join(FRAME_DIR, "frame.bin")
 
 def _ensure_file() -> None:
     os.makedirs(FRAME_DIR, exist_ok=True)
-    # Cria o arquivo com o tamanho exato se ainda nao existe ou esta menor.
+    # Cria o arquivo com o tamanho MAXIMO se ainda nao existe ou esta menor
+    # (ex.: arquivo antigo dimensionado para 720p de uma versao anterior).
     if not os.path.exists(FRAME_FILE) or os.path.getsize(FRAME_FILE) < TOTAL_BYTES:
         with open(FRAME_FILE, "wb") as f:
             f.write(b"\x00" * TOTAL_BYTES)
 
 
 class CamFXVirtualCamera:
-    """Escreve frames no arquivo compartilhado. Mesma interface do pyvirtualcam."""
+    """Escreve frames no arquivo compartilhado. Mesma interface do pyvirtualcam.
+
+    A resolucao e DINAMICA: cada frame enviado define width/height no header
+    (limitados ao MAX). O driver C++ le o header para saber o tamanho corrente.
+    """
 
     def __init__(self, width: int = WIDTH, height: int = HEIGHT, fps: int = 30):
-        self.width = WIDTH
-        self.height = HEIGHT
+        # Resolucao alvo desta sessao (o send ajusta o frame recebido para ela,
+        # limitada ao maximo do buffer). Nao mais travada em 720p.
+        self.width = max(2, min(int(width) or WIDTH, MAX_WIDTH))
+        self.height = max(2, min(int(height) or HEIGHT, MAX_HEIGHT))
         self.fps = fps
         self.device = "CamFX"
         self._seq = 0
@@ -60,16 +79,18 @@ class CamFXVirtualCamera:
         self._mm = mmap.mmap(self._fh.fileno(), TOTAL_BYTES)
 
     def send(self, frame_bgr: np.ndarray) -> None:
-        """Envia um frame BGR (qualquer tamanho; ajustado para WIDTHxHEIGHT
-        SEM esticar - corta o excesso no aspecto de saida antes de escalar)."""
-        import cv2
+        """Envia um frame BGR na resolucao ALVO desta sessao (self.width x
+        self.height, dinamica). Se o frame ja tem esse tamanho, e enviado SEM
+        redimensionar (passthrough - preserva a nitidez da camera). So ajusta
+        se o tamanho difere, e sem esticar (crop central no aspecto de saida)."""
+        w_out, h_out = self.width, self.height
 
-        if frame_bgr.shape[1] != WIDTH or frame_bgr.shape[0] != HEIGHT:
-            # Crop central no aspecto de saida (16:9) para nao esticar cameras
-            # 4:3 (ex.: C505e em 960p = 1280x960). Sem isto o rosto do face swap
-            # sai alongado.
+        if frame_bgr.shape[1] != w_out or frame_bgr.shape[0] != h_out:
+            import cv2
+            # Crop central no aspecto de saida para nao esticar cameras com
+            # proporcao diferente (ex.: 4:3 para 16:9).
             h, w = frame_bgr.shape[:2]
-            target = WIDTH / HEIGHT
+            target = w_out / h_out
             src = w / h
             if abs(src - target) > 0.01:
                 if src > target:
@@ -80,16 +101,18 @@ class CamFXVirtualCamera:
                     new_h = int(round(w / target))
                     y0 = (h - new_h) // 2
                     frame_bgr = frame_bgr[y0:y0 + new_h, :]
-            frame_bgr = cv2.resize(frame_bgr, (WIDTH, HEIGHT))
+            frame_bgr = cv2.resize(frame_bgr, (w_out, h_out))
         if not frame_bgr.flags["C_CONTIGUOUS"]:
             frame_bgr = np.ascontiguousarray(frame_bgr)
 
         self._seq += 1
-        # Escreve os pixels primeiro, depois o header. NAO sobrescreve o campo
-        # 'consumers' (offset 24) - ele e o heartbeat gerenciado pelo driver.
-        # Por isso escrevemos so os primeiros 24 bytes (magic..ts_qpc).
-        self._mm[_HEADER_SIZE:TOTAL_BYTES] = frame_bgr.tobytes()
-        header = struct.pack("<iiiiq", MAGIC, WIDTH, HEIGHT, self._seq, 0)
+        # Escreve os pixels do frame (w_out*h_out*3 bytes) e depois o header com
+        # a resolucao REAL. O buffer e maior (1080p), mas so usamos o inicio.
+        # NAO sobrescreve 'consumers' (offset 24, heartbeat do driver): so os
+        # 24 primeiros bytes (magic..ts_qpc).
+        nbytes = w_out * h_out * BPP
+        self._mm[_HEADER_SIZE:_HEADER_SIZE + nbytes] = frame_bgr.tobytes()
+        header = struct.pack("<iiiiq", MAGIC, w_out, h_out, self._seq, 0)
         self._mm[0:24] = header
 
     def sleep_until_next_frame(self) -> None:

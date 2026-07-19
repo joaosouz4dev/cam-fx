@@ -29,9 +29,7 @@ from .updater import (
 )
 from .vcam_host import VCamHost
 from .version import get_version
-from .virtualcam import (
-    DemandMonitor, FRAME_FILE, TOTAL_BYTES, _HEADER_SIZE, WIDTH, HEIGHT,
-)
+from .virtualcam import DemandMonitor
 
 
 def pipeline_wanted(consumers: int, preview_forced: bool,

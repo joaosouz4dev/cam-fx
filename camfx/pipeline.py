@@ -253,7 +253,11 @@ class Pipeline:
         self._run_token = run_token
 
         try:
-            with CamFXVirtualCamera(fps=cfg.fps) as cam:
+            # Passa a resolucao alvo ao vcam (nao mais fixa em 720p). Assim a
+            # saida acompanha a config; o send() faz passthrough quando o frame
+            # ja esta nesse tamanho. Limitada ao MAX do buffer pelo proprio vcam.
+            with CamFXVirtualCamera(width=cfg.width, height=cfg.height,
+                                    fps=cfg.fps) as cam:
                 _dbg(f"_loop[4]: camera virtual ok ({cam.device}); "
                      "frames crus + loader de efeitos")
                 self._status(f"Camera virtual ativa: {cam.device}")

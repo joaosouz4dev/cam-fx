@@ -184,12 +184,16 @@ class Api:
     def get_status(self):
         if self.pipeline.running:
             fps = self.pipeline.fps
-            # Enquanto o motor ainda esta subindo (FPS=0), mostra o status de
-            # carregamento (ex.: "Carregando o detector...") em vez de
-            # "0 FPS" - senao a UI parece travada durante o carregamento.
+            # Enquanto a camera ainda esta abrindo (FPS=0), mostra o status de
+            # carregamento (ex.: "Abrindo camera...") em vez de "0 FPS" -
+            # senao a UI parece travada durante o carregamento.
             if fps < 1 and self._status and "ativa" not in self._status.lower():
                 return self._status
-            return f"Transmitindo na CamFX  ·  {fps:.0f} FPS"
+            base = f"Transmitindo na CamFX  ·  {fps:.0f} FPS"
+            # Efeitos carregando em fundo (startup progressivo): o video cru ja
+            # esta no ar, entao o "carregando X" aparece JUNTO ao FPS.
+            extra = getattr(self.pipeline, "effects_status", "")
+            return f"{base}  ·  {extra}" if extra else base
         return self._status
 
     # ---------- termos de uso (face swap) ----------
@@ -216,15 +220,16 @@ class Api:
         self.config.faceswap_enabled = bool(on)
         self.config.save()
         log(f"set_faceswap_enabled: salvo faceswap_enabled={self.config.faceswap_enabled}")
-        if self.pipeline.running:
-            threading.Thread(target=self.pipeline.restart, daemon=True).start()
+        # TOGGLE QUENTE: pluga/despluga o estagio ao vivo, sem reiniciar a
+        # camera (o restart fechava e reabria a webcam - tela preta ~10-30s).
+        self.pipeline.apply_effects()
         return {"ok": True}
 
     def set_faceswap_enhance(self, on):
         self.config.faceswap_enhance = bool(on)
         self.config.save()
-        if self.pipeline.running:
-            threading.Thread(target=self.pipeline.restart, daemon=True).start()
+        # O enhance e config do motor: recarrega so o estagio de swap, a quente.
+        self.pipeline.apply_effects(reload_swap=True)
 
     # ---------- seletor de modelos (swapper / enhancer) ----------
 
@@ -283,15 +288,14 @@ class Api:
     def set_swap_model(self, model_id):
         self.config.swap_model_id = model_id
         self.config.save()
-        if self.pipeline.running:
-            threading.Thread(target=self.pipeline.restart, daemon=True).start()
+        # Recarrega so o estagio de swap com o novo modelo; a camera nao para.
+        self.pipeline.apply_effects(reload_swap=True)
         return {"ok": True}
 
     def set_enhance_model(self, model_id):
         self.config.enhance_model_id = model_id or ""
         self.config.save()
-        if self.pipeline.running:
-            threading.Thread(target=self.pipeline.restart, daemon=True).start()
+        self.pipeline.apply_effects(reload_swap=True)
         return {"ok": True}
 
     def choose_model_file(self, kind):
@@ -315,8 +319,7 @@ class Api:
             self.config.enhance_model_id = registry.CUSTOM_ID
             self.config.enhance_model_path = path
         self.config.save()
-        if self.pipeline.running:
-            threading.Thread(target=self.pipeline.restart, daemon=True).start()
+        self.pipeline.apply_effects(reload_swap=True)
         import os
         return {"name": os.path.basename(path)}
 
@@ -343,11 +346,9 @@ class Api:
             return {"error": "Nao foi possivel ler essa imagem."}
         self.config.source_face_path = path
         self.config.save()
-        # O swap roda no BridgeRunner (motor DLC), que le a foto ao iniciar.
-        # Trocar a foto exige reiniciar o pipeline para o bridge recarregar.
-        if self.pipeline.running:
-            threading.Thread(
-                target=self.pipeline.restart, daemon=True).start()
+        # O motor le a foto ao preparar o estagio: recarrega SO o estagio de
+        # swap (a quente); a camera continua transmitindo o tempo todo.
+        self.pipeline.apply_effects(reload_swap=True)
         return {"thumb": thumb}
 
     def get_source_face_thumb(self):
@@ -458,12 +459,17 @@ class Api:
 
     def set_blur_enabled(self, on):
         self.config.blur_enabled = bool(on); self.config.save()
+        # Carrega o modelo se ele ainda nao existe (antes, ligar o blur com o
+        # pipeline rodando nao fazia NADA: o modelo so carregava no start) e
+        # libera recursos ao desligar. Tudo a quente, sem reiniciar a camera.
+        self.pipeline.apply_effects()
 
     def set_blur_strength(self, v):
         self.config.blur_strength = int(v); self.config.save()
 
     def set_framing_enabled(self, on):
         self.config.framing_enabled = bool(on); self.config.save()
+        self.pipeline.apply_effects()
 
     def set_zoom(self, v10):
         self.config.framing_zoom = int(v10) / 10.0; self.config.save()

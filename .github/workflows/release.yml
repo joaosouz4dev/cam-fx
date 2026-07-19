@@ -96,8 +96,10 @@ jobs:
           #  - faceswap_model_selection: re-download do modelo (a saga do trava)
           #  - frame_skip: deteccao a cada N frames respeitando config/env
           #  - frameops: fit_aspect nao estica 4:3->16:9; fix_blue_cast estavel
+          #  - stage_loader_staleness: startup progressivo nao pluga estagio de
+          #    config velha (reload em voo) nem estagio numa run morta
           #  - sim_pipeline_concurrency: rede de protecao do threading do
-          #    pipeline (start/stop/restart/demand nunca abrem 2 loops)
+          #    pipeline (start/stop/restart/demand/hot_toggle nunca abrem 2 loops)
           $tests = @(
             "tools/test_demand_logic.py",
             "tools/test_single_instance.py",
@@ -105,6 +107,7 @@ jobs:
             "tools/test_faceswap_model_selection.py",
             "tools/test_frame_skip.py",
             "tools/test_frameops.py",
+            "tools/test_stage_loader_staleness.py",
             "tools/sim_pipeline_concurrency.py"
           )
           foreach ($t in $tests) {

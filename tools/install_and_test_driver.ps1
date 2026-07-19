@@ -87,8 +87,13 @@ Write-Host "  DLL registrada (exit=0)."
 Write-Host "=== 2) escrevendo um frame de teste 1080p pelo Python ===" -ForegroundColor Cyan
 $py = Join-Path $root ".venv\Scripts\python.exe"
 if (-not (Test-Path $py)) { $py = "python" }
-$writer = @'
-import time, numpy as np
+# O writer roda de um arquivo temporario; injetamos a RAIZ do projeto no
+# sys.path para o `import camfx` funcionar (senao: ModuleNotFoundError).
+$rootPy = $root.Replace('\', '\\')
+$writer = @"
+import sys, time
+sys.path.insert(0, r"$root")
+import numpy as np
 import camfx.virtualcam as vc
 cam = vc.CamFXVirtualCamera(width=1920, height=1080, fps=30)
 frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
@@ -99,7 +104,7 @@ while time.time() - t < 6:
     cam.send(frame); time.sleep(0.03)
 cam.close()
 print("pronto: 1080p escrito no frame.bin.")
-'@
+"@
 $tmp = Join-Path $env:TEMP "camfx_writer.py"
 Set-Content -Path $tmp -Value $writer
 
@@ -107,8 +112,10 @@ Write-Host "=== 3) subindo o camfx_vcam.exe (host da camera) ===" -ForegroundCol
 $hostProc = Start-Process -FilePath $hostExe -PassThru -WindowStyle Hidden
 Start-Sleep -Seconds 1
 
-# roda o writer em paralelo enquanto o host le
+# roda o writer (da raiz do projeto, para o camfx no path funcionar tambem)
+Push-Location $root
 & $py $tmp
+Pop-Location
 
 Start-Sleep -Seconds 1
 try { $hostProc.Kill() } catch {}

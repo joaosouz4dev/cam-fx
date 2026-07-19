@@ -108,6 +108,7 @@ jobs:
             "tools/test_frame_skip.py",
             "tools/test_frameops.py",
             "tools/test_stage_loader_staleness.py",
+            "tools/test_shmem_roundtrip.py",
             "tools/sim_pipeline_concurrency.py"
           )
           foreach ($t in $tests) {

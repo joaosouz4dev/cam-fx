@@ -20,9 +20,12 @@ scikit-image==0.24.0
 # GPU NVIDIA (CUDA): para acelerar o face swap em placas NVIDIA, troque o
 # onnxruntime-directml pelo onnxruntime-gpu compativel com o seu CUDA.
 # Requer CUDA Toolkit + cuDNN 9. Para CUDA 12.x use a serie 1.22 (a 1.27 exige
-# CUDA 13). As DLLs do cuDNN/cuBLAS via pip (abaixo) sao colocadas no PATH pelo
-# proprio app (camfx.models.enable_cuda_dlls). Sem NVIDIA, mantenha o
-# onnxruntime-directml do requirements.txt e o swap roda em DirectML/CPU.
+# CUDA 13). O onnxruntime-gpu 1.22 DECLARA suas deps CUDA (cuda_nvrtc,
+# cuda_runtime, cufft, curand, cudnn; cublas vem via cudnn); instalado SEM
+# --no-deps, o pip as puxa sozinho. Todas as DLLs (cudnn/cublas/cufft/curand)
+# sao colocadas no PATH pelo proprio app (camfx.models.enable_cuda_dlls) e
+# coletadas no bundle pelo build.py. Sem NVIDIA, mantenha o onnxruntime-directml
+# do requirements.txt e o swap roda em DirectML/CPU.
 #   pip uninstall -y onnxruntime-directml
 #   pip install onnxruntime-gpu==1.22.0 "nvidia-cudnn-cu12>=9,<10" nvidia-cublas-cu12
 

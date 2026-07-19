@@ -115,11 +115,15 @@ def main() -> int:
             "camfx.vendor.dlc.modules.core",
         ):
             cmd += ["--hidden-import", hidden]
-        # DLLs do CUDA (cuDNN/cuBLAS) dos pacotes pip nvidia-*: sem elas o
-        # CUDAExecutionProvider nao carrega no PC do usuario. --collect-all
-        # pega binarios + dados de cada pacote nvidia presente.
+        # DLLs do CUDA dos pacotes pip nvidia-*: sem elas o CUDAExecutionProvider
+        # nao carrega no PC do usuario. --collect-all pega binarios + dados de
+        # cada pacote presente. A lista sao as dependencias declaradas do
+        # onnxruntime-gpu 1.22 (extras cuda+cudnn): cudnn, cublas (via cudnn),
+        # cuda_nvrtc, cuda_runtime, cufft e curand. NAO incluir nvidia.nvjitlink:
+        # nao e dependencia declarada de onnxruntime-gpu nem de cudnn 9, entao o
+        # find_spec sempre falha (nunca instalado) - seria no-op.
         for nv in ("nvidia.cudnn", "nvidia.cublas", "nvidia.cuda_nvrtc",
-                   "nvidia.cuda_runtime", "nvidia.cufft", "nvidia.nvjitlink"):
+                   "nvidia.cuda_runtime", "nvidia.cufft", "nvidia.curand"):
             if importlib.util.find_spec(nv) is not None:
                 cmd += ["--collect-all", nv]
         print("Incluindo face swap (insightface + motor DLC + CUDA) no bundle.")

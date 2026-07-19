@@ -136,10 +136,12 @@ def enable_cuda_dlls() -> bool:
         if base.exists():
             found += glob.glob(str(base / "*" / "bin"))
     # 2) Exe empacotado (PyInstaller): as DLLs coletadas ficam no _MEIPASS e/ou
-    # na pasta do exe. Adiciona qualquer pasta que contenha cudnn/cublas.
+    # na pasta do exe. Adiciona qualquer pasta que contenha uma DLL do CUDA que
+    # o onnxruntime carrega dinamicamente (cudnn/cublas/cufft/curand) - todas
+    # dependencias declaradas do onnxruntime-gpu 1.22.
     for root in _bundle_dirs():
         for dll in ("cudnn64_*.dll", "cublas64_*.dll", "cublasLt64_*.dll",
-                    "cufft64_*.dll"):
+                    "cufft64_*.dll", "curand64_*.dll"):
             for hit in glob.glob(str(root / "**" / dll), recursive=True):
                 d = str(Path(hit).parent)
                 if d not in found:

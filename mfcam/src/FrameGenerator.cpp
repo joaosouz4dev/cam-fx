@@ -62,8 +62,8 @@ bool FrameGenerator::FillBitmapFromCamFX()
 
     static int logCount = 0;
     if (logCount++ % 60 == 0)
-        CamFXLog("FillBitmap: magic=0x%08X want=0x%08X w=%ld h=%ld",
-            hdr->magic, CAMFX_MAGIC, hdr->width, hdr->height);
+        CamFXLog("FillBitmap: magic=0x%08X want=0x%08X frame=%ldx%ld bitmap=%ux%u",
+            hdr->magic, CAMFX_MAGIC, hdr->width, hdr->height, _width, _height);
 
     if (hdr->magic != CAMFX_MAGIC) return false;
 
@@ -112,6 +112,11 @@ bool FrameGenerator::FillBitmapFromCamFX()
 
 HRESULT FrameGenerator::EnsureRenderTarget(UINT width, UINT height)
 {
+	// Diagnostico da resolucao NEGOCIADA (aparece no dll.log): ajuda a achar
+	// bugs de resolucao dinamica em cada app (720p vs 1080p, GPU vs CPU).
+	CamFXLog("EnsureRenderTarget: negociado w=%u h=%u (gpu=%d, bitmap atual w=%u h=%u)",
+		width, height, HasD3DManager() ? 1 : 0, _width, _height);
+
 	// RESOLUCAO DINAMICA: se a resolucao mudou desde a ultima vez (ex.: o app
 	// renegociou de 720p para 1080p), descarta o bitmap/render target CPU antigo
 	// para recria-lo no tamanho novo. No caminho GPU a textura e recriada em

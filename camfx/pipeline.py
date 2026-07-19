@@ -506,6 +506,14 @@ class Pipeline:
         miss = 0
         last_good = None
 
+        # PROFILING (CAMFX_PROFILE=1): acumula o tempo gasto em cada etapa e loga
+        # um resumo por segundo. Sem custo quando desligado (so um getenv). Serve
+        # para decidir ONDE cortar CPU com dados, nao palpite.
+        import os as _os
+        _profile = _os.environ.get("CAMFX_PROFILE", "").strip() in ("1", "true", "on")
+        _t = {"swap": 0.0, "framing": 0.0, "blur": 0.0, "send": 0.0, "idle": 0.0}
+        _processed = 0
+
         # Thread de captura: o cap.read() do MSMF e lento (~50ms/frame). Lendo
         # numa thread dedicada, o processamento usa sempre o frame mais recente
         # sem esperar o read, desacoplando o FPS de saida da latencia do read.
@@ -566,6 +574,8 @@ class Pipeline:
                 # Se nao chegou frame novo, nao reprocessa (economiza CPU e nao
                 # introduz atraso reenviando frame velho); espera um pouco.
                 if seq == last_seq:
+                    if _profile:
+                        _t["idle"] += 0.002
                     time.sleep(0.002)
                     continue
                 last_seq = seq
@@ -590,27 +600,40 @@ class Pipeline:
                         # toggle-off instantaneo mesmo antes do despluge.
                         if self._swap is not None and self._swap.ready \
                                 and getattr(cfg, "faceswap_enabled", False):
+                            _s = time.perf_counter() if _profile else 0
                             frame = self._swap.process(frame)
+                            if _profile:
+                                _t["swap"] += time.perf_counter() - _s
                         if cfg.framing_enabled and self._framing:
+                            _s = time.perf_counter() if _profile else 0
                             frame = self._framing.process(
                                 frame, ts_ms,
                                 zoom=cfg.framing_zoom,
                                 smoothing=cfg.framing_smoothing,
                             )
+                            if _profile:
+                                _t["framing"] += time.perf_counter() - _s
                         if cfg.blur_enabled and self._blur:
+                            _s = time.perf_counter() if _profile else 0
                             frame = self._blur.process(
                                 frame, ts_ms + 1,
                                 blur_strength=cfg.blur_strength,
                                 mask_threshold=cfg.mask_threshold,
                                 edge_softness=cfg.edge_softness,
                             )
+                            if _profile:
+                                _t["blur"] += time.perf_counter() - _s
                 except Exception as exc:
                     from .log import log as _log
                     _log(f"Erro no processamento: {exc!r}")
                     self._error(f"Erro no processamento: {exc}")
                     break
 
+                _s = time.perf_counter() if _profile else 0
                 cam.send(frame)
+                if _profile:
+                    _t["send"] += time.perf_counter() - _s
+                    _processed += 1
                 last_good = frame
                 # Sem sleep: o ritmo ja e ditado pela chegada de frames novos da
                 # camera (so processamos quando seq muda). Dormir aqui so somaria
@@ -625,6 +648,20 @@ class Pipeline:
                 now = time.perf_counter()
                 if now - last_fps_calc >= 1.0:
                     self._fps_actual = frame_count / (now - last_fps_calc)
+                    if _profile:
+                        span = now - last_fps_calc
+                        pct = {k: 100.0 * v / span for k, v in _t.items()}
+                        busy = pct["swap"] + pct["framing"] + pct["blur"] + pct["send"]
+                        _log(
+                            f"PROFILE: {self._fps_actual:.0f} FPS "
+                            f"({_processed} proc) | tempo/s: "
+                            f"swap={pct['swap']:.0f}% framing={pct['framing']:.0f}% "
+                            f"blur={pct['blur']:.0f}% send={pct['send']:.0f}% "
+                            f"ocioso={pct['idle']:.0f}% | trabalho={busy:.0f}%"
+                        )
+                        for k in _t:
+                            _t[k] = 0.0
+                        _processed = 0
                     frame_count = 0
                     last_fps_calc = now
         finally:

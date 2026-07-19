@@ -84,7 +84,8 @@ class Api:
         from .single_instance import SingleInstance  # noqa: F401 (mantido no main)
 
         self._vcam_host = VCamHost()
-        self._vcam_host.start()
+        if not self._vcam_host.start():
+            log(f"vcam host FALHOU: {self._vcam_host.last_error}")
         try:
             self._demand_monitor = DemandMonitor()
         except Exception as exc:

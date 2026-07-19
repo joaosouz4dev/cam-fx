@@ -134,16 +134,6 @@ class CamFXVirtualCamera:
         self.close()
 
 
-def is_driver_registered() -> bool:
-    """True se a camera CamFX estiver disponivel (via enumeracao do sistema)."""
-    try:
-        from pygrabber.dshow_graph import FilterGraph
-
-        return "CamFX" in FilterGraph().get_input_devices()
-    except Exception:
-        return False
-
-
 class DemandMonitor:
     """Detecta se a camera CamFX esta sendo consumida por algum app.
 

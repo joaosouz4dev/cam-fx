@@ -66,7 +66,19 @@ bool FrameGenerator::FillBitmapFromCamFX()
             hdr->magic, CAMFX_MAGIC, hdr->width, hdr->height);
 
     if (hdr->magic != CAMFX_MAGIC) return false;
-    if (hdr->width != (LONG)_width || hdr->height != (LONG)_height) return false;
+
+    // RESOLUCAO DINAMICA: o app envia frames na resolucao REAL (no header).
+    // Idealmente ela casa com a negociada (_width/_height); o app Python entrega
+    // na resolucao alvo. Mas por seguranca copiamos so o MINIMO entre o frame
+    // do header e o bitmap negociado - nunca lemos/escrevemos alem do menor dos
+    // dois (evita estouro se, por um instante de renegociacao, divergirem).
+    const LONG fw = hdr->width;
+    const LONG fh = hdr->height;
+    if (fw <= 0 || fh <= 0) return false;
+    if (fw > CAMFX_MAX_WIDTH || fh > CAMFX_MAX_HEIGHT) return false;  // sanidade
+
+    const UINT copyW = (UINT)((fw < (LONG)_width) ? fw : (LONG)_width);
+    const UINT copyH = (UINT)((fh < (LONG)_height) ? fh : (LONG)_height);
 
     bool copied = false;
     const BYTE* src = _camfxShared + sizeof(CamFXSharedHeader);
@@ -79,12 +91,14 @@ bool FrameGenerator::FillBitmapFromCamFX()
         lock->GetDataPointer(&size, &dst);
         if (dst)
         {
-            // BGR (3 bytes) -> BGRA (4 bytes), por linha respeitando o stride.
-            for (UINT y = 0; y < _height; y++)
+            // BGR (3 bytes) -> BGRA (4 bytes), por linha. O src usa o stride do
+            // FRAME (fw*3, resolucao real do header); o dst usa o stride do
+            // BITMAP (negociado). Copiamos so copyW x copyH.
+            for (UINT y = 0; y < copyH; y++)
             {
-                const BYTE* s = src + (size_t)y * _width * 3;
+                const BYTE* s = src + (size_t)y * fw * 3;
                 BYTE* d = dst + (size_t)y * stride;
-                for (UINT x = 0; x < _width; x++)
+                for (UINT x = 0; x < copyW; x++)
                 {
                     d[0] = s[0]; d[1] = s[1]; d[2] = s[2]; d[3] = 255;
                     s += 3; d += 4;
@@ -98,7 +112,18 @@ bool FrameGenerator::FillBitmapFromCamFX()
 
 HRESULT FrameGenerator::EnsureRenderTarget(UINT width, UINT height)
 {
-	if (!HasD3DManager())
+	// RESOLUCAO DINAMICA: se a resolucao mudou desde a ultima vez (ex.: o app
+	// renegociou de 720p para 1080p), descarta o bitmap/render target CPU antigo
+	// para recria-lo no tamanho novo. No caminho GPU a textura e recriada em
+	// SetD3DManager; aqui tratamos o caminho CPU.
+	if (_bitmap && (_width != width || _height != height))
+	{
+		_bitmap.reset();
+		_renderTarget.reset();
+		_whiteBrush.reset();
+	}
+
+	if (!HasD3DManager() && !_bitmap)
 	{
 		// create a D2D1 render target from WIC bitmap
 		wil::com_ptr_nothrow<ID2D1Factory> d2d1Factory;

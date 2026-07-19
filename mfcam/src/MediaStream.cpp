@@ -6,6 +6,7 @@
 #include "FrameGenerator.h"
 #include "MediaStream.h"
 #include "MediaSource.h"
+#include "CamFXShared.h"   // CAMFX_FPS, CAMFX_MAX_WIDTH/HEIGHT
 
 HRESULT MediaStream::Initialize(IMFMediaSource* source, int index)
 {
@@ -20,50 +21,85 @@ HRESULT MediaStream::Initialize(IMFMediaSource* source, int index)
 
 	RETURN_IF_FAILED(MFCreateEventQueue(&_queue));
 
-	// set 1 here to force RGB32 only
-	auto types = wil::make_unique_cotaskmem_array<wil::com_ptr_nothrow<IMFMediaType>>(2);
+	// RESOLUCAO DINAMICA: anunciamos varias resolucoes (maior primeiro, para o
+	// app preferir HD), cada uma em RGB32 e NV12. O app de video escolhe uma; a
+	// escolhida vem em Start(type) e define o render target. As resolucoes
+	// precisam caber no buffer da shmem (<= CAMFX_MAX_*).
+	struct Res { UINT w; UINT h; };
+	static const Res kResolutions[] = {
+		{ 1920, 1080 },
+		{ 1280, 720 },
+		{ 640, 480 },
+	};
+	const UINT kFps = CAMFX_FPS;
+	const size_t nRes = ARRAYSIZE(kResolutions);
 
-#define NUM_IMAGE_COLS 1280  // CamFX: alinhado com a shmem (CAMFX_WIDTH)
-#define NUM_IMAGE_ROWS 720   // CamFX: alinhado com a shmem (CAMFX_HEIGHT)
+	// Array CRU de ponteiros crus, como MFCreateStreamDescriptor exige
+	// (IMFMediaType**). Preenchemos com .detach() (posse transferida) e, apos o
+	// MFCreateStreamDescriptor (que faz seu proprio AddRef), liberamos com
+	// Release. 2 formatos (RGB32 + NV12) por resolucao.
+	IMFMediaType* types[ARRAYSIZE(kResolutions) * 2] = {};
+	size_t ti = 0;
+	HRESULT hrInit = S_OK;
 
-	wil::com_ptr_nothrow<IMFMediaType> rgbType;
-	RETURN_IF_FAILED(MFCreateMediaType(&rgbType));
-	rgbType->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
-	rgbType->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_RGB32);
-	MFSetAttributeSize(rgbType.get(), MF_MT_FRAME_SIZE, NUM_IMAGE_COLS, NUM_IMAGE_ROWS);
-	rgbType->SetUINT32(MF_MT_DEFAULT_STRIDE, NUM_IMAGE_COLS * 4);
-	rgbType->SetUINT32(MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive);
-	rgbType->SetUINT32(MF_MT_ALL_SAMPLES_INDEPENDENT, TRUE);
-	MFSetAttributeRatio(rgbType.get(), MF_MT_FRAME_RATE, 30, 1);
-	auto bitrate = (uint32_t)(NUM_IMAGE_COLS * NUM_IMAGE_ROWS * 4 * 8 * 30);
-	rgbType->SetUINT32(MF_MT_AVG_BITRATE, bitrate);
-	MFSetAttributeRatio(rgbType.get(), MF_MT_PIXEL_ASPECT_RATIO, 1, 1);
-	types[0] = rgbType.detach();
-
-	if (types.size() > 1)
+	for (size_t i = 0; i < nRes && SUCCEEDED(hrInit); i++)
 	{
+		const UINT w = kResolutions[i].w;
+		const UINT h = kResolutions[i].h;
+
+		wil::com_ptr_nothrow<IMFMediaType> rgbType;
+		hrInit = MFCreateMediaType(&rgbType);
+		if (SUCCEEDED(hrInit))
+		{
+			rgbType->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
+			rgbType->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_RGB32);
+			MFSetAttributeSize(rgbType.get(), MF_MT_FRAME_SIZE, w, h);
+			rgbType->SetUINT32(MF_MT_DEFAULT_STRIDE, w * 4);
+			rgbType->SetUINT32(MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive);
+			rgbType->SetUINT32(MF_MT_ALL_SAMPLES_INDEPENDENT, TRUE);
+			MFSetAttributeRatio(rgbType.get(), MF_MT_FRAME_RATE, kFps, 1);
+			rgbType->SetUINT32(MF_MT_AVG_BITRATE, (uint32_t)(w * h * 4 * 8 * kFps));
+			MFSetAttributeRatio(rgbType.get(), MF_MT_PIXEL_ASPECT_RATIO, 1, 1);
+			types[ti++] = rgbType.detach();
+		}
+
 		wil::com_ptr_nothrow<IMFMediaType> nv12Type;
-		RETURN_IF_FAILED(MFCreateMediaType(&nv12Type));
-		nv12Type->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
-		nv12Type->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_NV12);
-		nv12Type->SetUINT32(MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive);
-		nv12Type->SetUINT32(MF_MT_ALL_SAMPLES_INDEPENDENT, TRUE);
-		MFSetAttributeSize(nv12Type.get(), MF_MT_FRAME_SIZE, NUM_IMAGE_COLS, NUM_IMAGE_ROWS);
-		nv12Type->SetUINT32(MF_MT_DEFAULT_STRIDE, (UINT)(NUM_IMAGE_COLS * 1.5));
-		MFSetAttributeRatio(nv12Type.get(), MF_MT_FRAME_RATE, 30, 1);
-		// frame size * pixel bit size * framerate
-		bitrate = (uint32_t)(NUM_IMAGE_COLS * 1.5 * NUM_IMAGE_ROWS * 8 * 30);
-		nv12Type->SetUINT32(MF_MT_AVG_BITRATE, bitrate);
-		MFSetAttributeRatio(nv12Type.get(), MF_MT_PIXEL_ASPECT_RATIO, 1, 1);
-		types[1] = nv12Type.detach();
+		if (SUCCEEDED(hrInit)) hrInit = MFCreateMediaType(&nv12Type);
+		if (SUCCEEDED(hrInit))
+		{
+			nv12Type->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
+			nv12Type->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_NV12);
+			nv12Type->SetUINT32(MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive);
+			nv12Type->SetUINT32(MF_MT_ALL_SAMPLES_INDEPENDENT, TRUE);
+			MFSetAttributeSize(nv12Type.get(), MF_MT_FRAME_SIZE, w, h);
+			// NV12: stride do plano Y = w (1 byte/pixel), NAO w*3/2.
+			nv12Type->SetUINT32(MF_MT_DEFAULT_STRIDE, w);
+			MFSetAttributeRatio(nv12Type.get(), MF_MT_FRAME_RATE, kFps, 1);
+			// NV12 = 12 bpp -> bitrate = w*h*12*fps/8 * 8 = w*h*12*fps bits/s.
+			nv12Type->SetUINT32(MF_MT_AVG_BITRATE, (uint32_t)(w * h * 12 * kFps));
+			MFSetAttributeRatio(nv12Type.get(), MF_MT_PIXEL_ASPECT_RATIO, 1, 1);
+			types[ti++] = nv12Type.detach();
+		}
 	}
 
-	RETURN_IF_FAILED_MSG(MFCreateStreamDescriptor(_index, (DWORD)types.size(), types.get(), &_descriptor), "MFCreateStreamDescriptor failed");
+	HRESULT hr = hrInit;
+	if (SUCCEEDED(hr))
+		hr = MFCreateStreamDescriptor(_index, (DWORD)ti, types, &_descriptor);
+
+	// O descriptor fez AddRef nos tipos; liberamos a nossa referencia.
+	for (size_t k = 0; k < ti; k++)
+		if (types[k]) types[k]->Release();
+
+	RETURN_IF_FAILED_MSG(hr, "MFCreateStreamDescriptor failed");
 
 	wil::com_ptr_nothrow<IMFMediaTypeHandler> handler;
 	RETURN_IF_FAILED(_descriptor->GetMediaTypeHandler(&handler));
 	TraceMFAttributes(handler.get(), L"MediaTypeHandler");
-	RETURN_IF_FAILED(handler->SetCurrentMediaType(types[0]));
+	// Tipo default = o primeiro (maior resolucao, RGB32). Buscamos pelo handler
+	// para nao depender de um ponteiro que ja liberamos.
+	wil::com_ptr_nothrow<IMFMediaType> firstType;
+	RETURN_IF_FAILED(handler->GetMediaTypeByIndex(0, &firstType));
+	RETURN_IF_FAILED(handler->SetCurrentMediaType(firstType.get()));
 
 	return S_OK;
 }
@@ -72,15 +108,27 @@ HRESULT MediaStream::Start(IMFMediaType* type)
 {
 	RETURN_HR_IF(MF_E_SHUTDOWN, !_queue || !_allocator);
 
+	// Resolucao negociada com o app. Default = maior anunciada (1080p) caso o
+	// type nao traga MF_MT_FRAME_SIZE por algum motivo.
+	UINT negW = CAMFX_MAX_WIDTH, negH = CAMFX_MAX_HEIGHT;
 	if (type)
 	{
 		RETURN_IF_FAILED(type->GetGUID(MF_MT_SUBTYPE, &_format));
 		WINTRACE(L"MediaStream::Start format: %s", GUID_ToStringW(_format).c_str());
+		UINT w = 0, h = 0;
+		if (SUCCEEDED(MFGetAttributeSize(type, MF_MT_FRAME_SIZE, &w, &h)) && w && h)
+		{
+			negW = w;
+			negH = h;
+		}
 	}
+	_negWidth = negW;
+	_negHeight = negH;
 
 	// at this point, set D3D manager may have not been called
-	// so we want to create a D2D1 renter target anyway
-	RETURN_IF_FAILED(_generator.EnsureRenderTarget(NUM_IMAGE_COLS, NUM_IMAGE_ROWS));
+	// so we want to create a D2D1 renter target anyway. Usa a resolucao
+	// NEGOCIADA (dinamica), nao mais a constante 720p.
+	RETURN_IF_FAILED(_generator.EnsureRenderTarget(negW, negH));
 
 	RETURN_IF_FAILED(_allocator->InitializeSampleAllocator(10, type));
 	RETURN_IF_FAILED(_queue->QueueEventParamVar(MEStreamStarted, GUID_NULL, S_OK, nullptr));
@@ -114,9 +162,12 @@ HRESULT MediaStream::SetD3DManager(IUnknown* manager)
 {
 	RETURN_HR_IF_NULL(E_POINTER, manager);
 
-	// comment these 2 lines to force CPU usage
+	// comment these 2 lines to force CPU usage. Usa a resolucao negociada
+	// (definida em Start); se ainda nao negociou, cai no maximo (1080p).
+	UINT w = _negWidth ? _negWidth : CAMFX_MAX_WIDTH;
+	UINT h = _negHeight ? _negHeight : CAMFX_MAX_HEIGHT;
 	RETURN_IF_FAILED(_allocator->SetDirectXManager(manager));
-	RETURN_IF_FAILED(_generator.SetD3DManager(manager, NUM_IMAGE_COLS, NUM_IMAGE_ROWS));
+	RETURN_IF_FAILED(_generator.SetD3DManager(manager, w, h));
 	return S_OK;
 }
 

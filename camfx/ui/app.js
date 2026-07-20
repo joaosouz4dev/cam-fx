@@ -230,12 +230,29 @@ function togglePreview() {
 
 async function tickPreview() {
   if (!previewOn) return;
+  // Nao pede frame se a janela esta oculta (minimizada/bandeja/outra aba):
+  // o preview so importa quando visivel. Reagenda devagar e sai.
+  if (document.hidden) {
+    previewTimer = setTimeout(tickPreview, 500);
+    return;
+  }
   try {
     const data = await api().get_preview_frame();
     if (data) document.getElementById("preview").src = data;
   } catch (e) {}
-  previewTimer = setTimeout(tickPreview, 120);
+  // ~5 fps: suficiente para uma miniatura de conferencia; 8+ fps so gastava
+  // CPU recomprimindo JPEG. O backend ainda cacheia por frame, entao pedir de
+  // novo sem frame novo e barato.
+  previewTimer = setTimeout(tickPreview, 200);
 }
+
+// Retoma na hora quando a janela volta a ficar visivel (sem esperar o timer).
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && previewOn) {
+    if (previewTimer) clearTimeout(previewTimer);
+    tickPreview();
+  }
+});
 
 async function pollStatus() {
   try {

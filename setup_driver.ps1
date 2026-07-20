@@ -36,6 +36,7 @@ $src = Join-Path $root "mfcam\src"
 Copy-Item (Join-Path $src "CamFXShared.h")    (Join-Path $mfref "VCamSampleSource\") -Force
 Copy-Item (Join-Path $src "FrameGenerator.h") (Join-Path $mfref "VCamSampleSource\") -Force
 Copy-Item (Join-Path $src "FrameGenerator.cpp") (Join-Path $mfref "VCamSampleSource\") -Force
+Copy-Item (Join-Path $src "MediaStream.h")    (Join-Path $mfref "VCamSampleSource\") -Force
 Copy-Item (Join-Path $src "MediaStream.cpp")  (Join-Path $mfref "VCamSampleSource\") -Force
 Copy-Item (Join-Path $src "camfx_vcam.cpp")   (Join-Path $mfref "VCamSample\") -Force
 Copy-Item (Join-Path $src "CamFXShared.h")    (Join-Path $mfref "VCamSample\") -Force
